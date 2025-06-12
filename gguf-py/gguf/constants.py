@@ -277,6 +277,7 @@ class GGUFType:
 class MODEL_ARCH(IntEnum):
     MMPROJ           = auto() # dummy arch for clip.cpp
     LLAMA            = auto()
+    LLAMA_MHA2MLA    = auto()
     LLAMA4           = auto()
     DECI             = auto()
     FALCON           = auto()
@@ -375,6 +376,12 @@ class MODEL_TENSOR(IntEnum):
     ATTN_OUT_NORM        = auto()
     ATTN_POST_NORM       = auto()
     ATTN_ROT_EMBD        = auto()
+    ATTN_K_R             = auto()
+    ATTN_DOWN_KV         = auto()
+    ATTN_UP_K            = auto()
+    ATTN_UP_V            = auto()
+    ATTN_ROPE_Q_MASK     = auto()
+    ATTN_ROPE_K_MASK     = auto()
     FFN_GATE_INP         = auto()
     FFN_GATE_INP_SHEXP   = auto()
     FFN_NORM             = auto()
@@ -557,6 +564,7 @@ class MODEL_TENSOR(IntEnum):
 MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.MMPROJ:           "clip", # dummy arch for clip.cpp
     MODEL_ARCH.LLAMA:            "llama",
+    MODEL_ARCH.LLAMA_MHA2MLA:    "llama-mha2mla",
     MODEL_ARCH.LLAMA4:           "llama4",
     MODEL_ARCH.DECI:             "deci",
     MODEL_ARCH.FALCON:           "falcon",
@@ -657,6 +665,12 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.ATTN_K_NORM:               "blk.{bid}.attn_k_norm",
     MODEL_TENSOR.ATTN_OUT_NORM:             "blk.{bid}.attn_output_norm",
     MODEL_TENSOR.ATTN_POST_NORM:            "blk.{bid}.post_attention_norm",
+    MODEL_TENSOR.ATTN_K_R:                  "blk.{bid}.attn_k_r",
+    MODEL_TENSOR.ATTN_DOWN_KV:              "blk.{bid}.attn_down_kv",
+    MODEL_TENSOR.ATTN_UP_K:                 "blk.{bid}.attn_up_k",
+    MODEL_TENSOR.ATTN_UP_V:                 "blk.{bid}.attn_up_v",
+    MODEL_TENSOR.ATTN_ROPE_Q_MASK:          "blk.{bid}.attn_rope_q_mask",
+    MODEL_TENSOR.ATTN_ROPE_K_MASK:          "blk.{bid}.attn_rope_k_mask",
     MODEL_TENSOR.FFN_GATE_INP:              "blk.{bid}.ffn_gate_inp",
     MODEL_TENSOR.FFN_GATE_INP_SHEXP:        "blk.{bid}.ffn_gate_inp_shexp",
     MODEL_TENSOR.FFN_NORM:                  "blk.{bid}.ffn_norm",
@@ -903,6 +917,30 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.ATTN_Q,
         MODEL_TENSOR.ATTN_K,
         MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.ATTN_ROT_EMBD,
+        MODEL_TENSOR.FFN_GATE_INP,
+        MODEL_TENSOR.FFN_NORM,
+        MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+        MODEL_TENSOR.FFN_GATE_EXP,
+        MODEL_TENSOR.FFN_DOWN_EXP,
+        MODEL_TENSOR.FFN_UP_EXP,
+    ],
+    MODEL_ARCH.LLAMA_MHA2MLA: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT_NORM,
+        MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.ROPE_FREQS,
+        MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_K_R,
+        MODEL_TENSOR.ATTN_DOWN_KV,
+        MODEL_TENSOR.ATTN_UP_K,
+        MODEL_TENSOR.ATTN_UP_V,
+        MODEL_TENSOR.ATTN_ROPE_Q_MASK,
+        MODEL_TENSOR.ATTN_ROPE_K_MASK,
         MODEL_TENSOR.ATTN_OUT,
         MODEL_TENSOR.ATTN_ROT_EMBD,
         MODEL_TENSOR.FFN_GATE_INP,
@@ -2050,6 +2088,10 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
 # tensors that will not be serialized
 MODEL_TENSOR_SKIP: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
     MODEL_ARCH.LLAMA: [
+        MODEL_TENSOR.ROPE_FREQS,
+        MODEL_TENSOR.ATTN_ROT_EMBD,
+    ],
+    MODEL_ARCH.LLAMA_MHA2MLA: [
         MODEL_TENSOR.ROPE_FREQS,
         MODEL_TENSOR.ATTN_ROT_EMBD,
     ],

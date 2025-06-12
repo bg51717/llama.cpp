@@ -7,6 +7,7 @@ import ast
 import logging
 import argparse
 import contextlib
+from types import SimpleNamespace
 import json
 import os
 import re
@@ -2016,6 +2017,117 @@ class LlamaModel(TextModel):
             if len(experts) > 0:
                 raise ValueError(f"Unprocessed experts: {experts}")
 
+@ModelBase.register("LlamaMHA2MLAForCausalLM")
+class LlamaMha2MLAModel(LlamaModel):
+    """
+    LlamaMha2MLA is a llama model that uses the MHA2MLA to migrate to the MLA.
+    """
+    model_arch = gguf.MODEL_ARCH.LLAMA_MHA2MLA
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+
+
+    def partial_rope_mask(self, model_args, mha2mla_args):
+        """
+        Generate different types of masks for partial rotary position embeddings (RoPE)
+        based on configuration settings.
+        Returns:
+            Appropriate mask tensor based on the specified version
+        """
+        n_head = model_args.num_attention_heads
+        n_k_head = model_args.num_key_value_heads
+        if hasattr(model_args, "head_dim"):
+            d_head = model_args.head_dim
+        else:
+            d_head = model_args.hidden_size // n_head
+        d_head_half = d_head // 2
+        rope_dim_for_mla = mha2mla_args.rope_dim_for_mla
+        rope_dim_for_mla_half = rope_dim_for_mla // 2
+        rope_version = mha2mla_args.partial_rope_version
+        mask = torch.zeros(d_head)
+
+        def select_high_frequency(mask):
+            """
+            Select high-frequency components (first rope_dim_for_mla dimensions)
+            Returns:
+                mask: Binary mask with 1s for the first rope_dim_for_mla dimensions
+            """
+            mask[:rope_dim_for_mla_half] = 1
+            mask[d_head_half : d_head_half + rope_dim_for_mla_half] = 1
+            q_masks = mask.repeat(n_head).bool()
+            k_masks = mask.repeat(n_k_head).bool()
+            return q_masks, k_masks
+
+        def select_low_frequency(mask):
+            """
+            Select low-frequency components (last rope_dim_for_mla dimensions)
+            Returns:
+                mask: Binary mask with 1s for the last rope_dim_for_mla dimensions
+            """
+            mask[d_head - rope_dim_for_mla_half :] = 1
+            mask[d_head_half - rope_dim_for_mla_half : d_head_half] = 1
+            q_masks = mask.repeat(n_head).bool()
+            k_masks = mask.repeat(n_k_head).bool()
+            return q_masks, k_masks
+
+        def select_uniform_frequency(mask, start_point):
+            """
+            Select uniformly distributed dimensions for RoPE
+            Returns:
+                mask: Binary mask with 1s at uniformly spaced positions
+            """
+            step = d_head // rope_dim_for_mla
+            assert d_head_half % step == 0, "rope_dim_for_mla must be greater than 0"
+
+            for i in range(start_point, d_head, step):
+                mask[i] = 1
+            q_masks = mask.repeat(n_head).bool()
+            k_masks = mask.repeat(n_k_head).bool()
+            return q_masks, k_masks
+
+        def select_2norm_frequency(mask, rope_dim_for_mla):
+            """
+            Select dimensions based on 2-norm frequency importance
+            Returns:
+                mask: Binary mask with 1s for the top rope_dim_for_mla dimensions by 2-norm
+            """
+            # This is a placeholder implementation since the exact 2-norm selection
+            # method was not detailed in the comments. In practice, this would
+            # require statistics from the weight matrices to determine importance.
+            with open(mha2mla_args.qk_tensor_path, "rb") as fin:
+                qk_norm_rank = torch.load(fin, weights_only=True)
+
+            k_masks = qk_norm_rank < rope_dim_for_mla_half
+            if mha2mla_args.is_gqa2mha2mla:
+                q_masks = k_masks
+            else:
+                q_masks = k_masks.repeat_interleave(n_head // n_k_head, dim=1)
+            k_masks = k_masks.view(k_masks.size(0), -1)
+            q_masks = q_masks.view(q_masks.size(0), -1)
+            return q_masks, k_masks
+
+        if rope_version == "high":
+            return select_high_frequency(mask)
+        elif rope_version == "low":
+            return select_low_frequency(mask)
+        elif rope_version == "uniform":
+            return select_uniform_frequency(mask, mha2mla_args.uniform_start_point)
+        elif rope_version == "2-norm":
+            return select_2norm_frequency(d_head, rope_dim_for_mla)
+
+
+    def generate_extra_tensors(self) -> Iterable[tuple[str, Tensor]]:
+        yield from super().generate_extra_tensors()
+        model_config = json.load(open(self.dir_model / "config.json", "r", encoding="utf-8"))
+        model_config["mha2mla"] = SimpleNamespace(**model_config["mha2mla"])
+        model_config = SimpleNamespace(**model_config)        
+        q_masks, k_masks = self.partial_rope_mask(model_config, model_config.mha2mla)
+        for layer_idx in range(self.block_count):
+            yield (self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_ROPE_Q_MASK, bid=layer_idx), torch.tensor(q_masks[layer_idx], dtype=torch.bool))
+            yield (self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_ROPE_K_MASK, bid=layer_idx), torch.tensor(k_masks[layer_idx], dtype=torch.bool))
 
 @ModelBase.register(
     "LlavaForConditionalGeneration", # pixtral

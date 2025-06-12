@@ -187,6 +187,10 @@ struct llama_hparams {
     uint32_t n_embd_v_s() const;
 
     bool is_swa(uint32_t il) const;
+
+    // MHA2MLA
+    uint32_t mha2mla_low_rank= 0;
+    uint32_t mha2mla_d_r=0;
 };
 
 static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");

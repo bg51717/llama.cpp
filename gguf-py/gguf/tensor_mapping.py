@@ -260,6 +260,26 @@ class TensorNameMap:
             "transformer.h.{bid}.attn.rotary_emb.inv_freq",            # codeshell
         ),
 
+        MODEL_TENSOR.ATTN_K_R: (
+            "model.layers.{bid}.self_attn.k_r_proj",
+        ),
+
+        MODEL_TENSOR.ATTN_DOWN_KV:(
+            "model.layers.{bid}.self_attn.kv_proj.down_kv",
+        ),
+
+        MODEL_TENSOR.ATTN_UP_K:(
+            "model.layers.{bid}.self_attn.kv_proj.up_k",
+        ),
+
+        MODEL_TENSOR.ATTN_UP_V:(
+            "model.layers.{bid}.self_attn.kv_proj.up_v",
+        ),
+
+        MODEL_TENSOR.ATTN_ROPE_Q_MASK: (),
+        
+        MODEL_TENSOR.ATTN_ROPE_K_MASK: (),
+
         # Feed-forward norm
         MODEL_TENSOR.FFN_NORM: (
             "gpt_neox.layers.{bid}.post_attention_layernorm",                # gptneox
