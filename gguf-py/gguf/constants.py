@@ -384,8 +384,8 @@ class MODEL_TENSOR(IntEnum):
     ATTN_DOWN_KV         = auto()
     ATTN_UP_K            = auto()
     ATTN_UP_V            = auto()
-    ATTN_ROPE_Q_MASK     = auto()
-    ATTN_ROPE_K_MASK     = auto()
+    ATTN_ROPE_Q_IDX      = auto()
+    ATTN_ROPE_K_IDX      = auto()
     FFN_GATE_INP         = auto()
     FFN_GATE_INP_SHEXP   = auto()
     FFN_NORM             = auto()
@@ -673,8 +673,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.ATTN_DOWN_KV:              "blk.{bid}.attn_down_kv",
     MODEL_TENSOR.ATTN_UP_K:                 "blk.{bid}.attn_up_k",
     MODEL_TENSOR.ATTN_UP_V:                 "blk.{bid}.attn_up_v",
-    MODEL_TENSOR.ATTN_ROPE_Q_MASK:          "blk.{bid}.attn_rope_q_mask",
-    MODEL_TENSOR.ATTN_ROPE_K_MASK:          "blk.{bid}.attn_rope_k_mask",
+    MODEL_TENSOR.ATTN_ROPE_Q_IDX:           "blk.{bid}.attn_rope_q_idx",
+    MODEL_TENSOR.ATTN_ROPE_K_IDX:           "blk.{bid}.attn_rope_k_idx",
     MODEL_TENSOR.FFN_GATE_INP:              "blk.{bid}.ffn_gate_inp",
     MODEL_TENSOR.FFN_GATE_INP_SHEXP:        "blk.{bid}.ffn_gate_inp_shexp",
     MODEL_TENSOR.FFN_NORM:                  "blk.{bid}.ffn_norm",
@@ -943,8 +943,8 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.ATTN_DOWN_KV,
         MODEL_TENSOR.ATTN_UP_K,
         MODEL_TENSOR.ATTN_UP_V,
-        MODEL_TENSOR.ATTN_ROPE_Q_MASK,
-        MODEL_TENSOR.ATTN_ROPE_K_MASK,
+        MODEL_TENSOR.ATTN_ROPE_Q_IDX,
+        MODEL_TENSOR.ATTN_ROPE_K_IDX,
         MODEL_TENSOR.ATTN_OUT,
         MODEL_TENSOR.ATTN_ROT_EMBD,
         MODEL_TENSOR.FFN_GATE_INP,

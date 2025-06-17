@@ -536,8 +536,7 @@ struct llm_graph_context {
         struct ggml_tensor * Qcur,
         struct ggml_tensor * rope_mask,
         struct ggml_tensor * inp_pos, 
-        int n_rot, 
-        float freq_base) const;
+        void* freq_base) const;
 
     ggml_tensor * build_attn_mha(
              ggml_cgraph * gf,

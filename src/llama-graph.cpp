@@ -1059,54 +1059,44 @@ ggml_tensor * llm_graph_context::build_pos_bias(ggml_tensor * pos_bucket, ggml_t
     return pos_bias;
 }
 
-struct PartialRopeParams {
-    int n_rot;
-    float freq_base;
-};
-
-void partial_rope_impl(struct ggml_tensor * dst, const struct ggml_tensor * src, const struct ggml_tensor * pos_tensor, const struct ggml_tensor * rope_mask, int ith, int nth, void * partial_rope_params) {
+void partial_rope_impl(struct ggml_tensor * ctx,const struct ggml_tensor * src, const struct ggml_tensor * pos_tensor, const struct ggml_tensor * rope_idx, int ith, int nth, void * p_graph_ctx) {
     
-    int n_rot = ((PartialRopeParams *) partial_rope_params)->n_rot;
-    float freq_base = ((PartialRopeParams *) partial_rope_params)->freq_base;
+    // int n_rot = ((struct llama_graph_context *)p_graph_ctx)->hparams->mha2mla_rope_dim_for_mla;
+    // float freq_base = ((struct llama_graph_context *)p_graph_ctx)->freq_base;
+    int n_rot = 8;
+    float freq_base = 10000.0f;
     const int ne0 = src->ne[0];  // head_dim
     const int ne1 = src->ne[1];  // n_head
     const int ne2 = src->ne[2];  // n_tokens
 
     const int32_t * pos = (const int32_t *) pos_tensor->data;
 
-    // 计算theta缩放因子
-    const float theta_scale = powf(freq_base, -2.0f / n_rot);
-
-    // 遍历所有位置和头
     for (int i2 = 0; i2 < ne2; i2++) {             // tokens
-        const int64_t p = pos[i2];                 // 当前token的位置
-
-        for (int i1 = ith; i1 < ne1; i1 += nth) {  // heads (多线程处理)
-            // 对每个维度对进行旋转
+        const int64_t p = pos[i2];                 // position
+  
+        for (int i1 = ith; i1 < ne1; i1 += nth) {  // heads
+            // dim
             for (int i0 = 0; i0 < n_rot/2; i0 += 1) {
-                float * mask_ptr = (float *) (rope_mask->data + i1 * rope_mask->ne[1] + i0);
-                if ( mask_ptr[0] == 0.0f) {
-                    // 如果mask为0，跳过该位置
-                    continue;
-                }
-
-                // 计算旋转角度
-                const float theta     = p * powf(freq_base, -i0 / (float) n_rot);
+                float * rope_idx_ptr = (float*)rope_idx->data + i1 * n_rot + i0 * rope_idx->nb[0];
+                int rope_test_data  = (int) rope_idx_ptr[0];
+                
+                // theta
+                const float theta     = p * powf(freq_base, -rope_test_data / (float) n_rot);
                 const float cos_theta = cosf(theta);
                 const float sin_theta = sinf(theta);
 
-                // 获取源数据指针
+                // src data pointer
                 const float * src_ptr =
                     (float *) ((char *) src->data + i2 * src->nb[2] + i1 * src->nb[1] + i0 * src->nb[0]);
 
-                // 获取目标数据指针
-                float * dst_ptr = (float *) ((char *) dst->data + i2 * dst->nb[2] + i1 * dst->nb[1] + i0 * dst->nb[0]);
+                // dst data pointer
+                float * dst_ptr = (float *) ((char *) src->data + i2 * src->nb[2] + i1 * src->nb[1] + i0 * src->nb[0]);
 
-                // 读取相邻的两个元素
+                // data
                 const float x0 = src_ptr[0];
                 const float x1 = src_ptr[int(n_rot/2)];
 
-                // 应用旋转变换
+                // apply rotation
                 dst_ptr[0] = x0 * cos_theta - x1 * sin_theta;
                 dst_ptr[int(n_rot/2)] = x0 * sin_theta + x1 * cos_theta;
             }
@@ -1114,11 +1104,10 @@ void partial_rope_impl(struct ggml_tensor * dst, const struct ggml_tensor * src,
     }
 }
 
-ggml_tensor * llm_graph_context::build_partial_rope(struct ggml_context * ctx, struct ggml_tensor * Qcur, struct ggml_tensor * rope_mask, 
-                                                    struct ggml_tensor * inp_pos, int n_rot, float freq_base) const{
-    struct PartialRopeParams partial_rope_impl_params = {n_rot, freq_base};
-    return ggml_map_custom3(ctx, Qcur, inp_pos, rope_mask,   
-                            partial_rope_impl, GGML_N_TASKS_MAX, (void *) &partial_rope_impl_params);  
+ggml_tensor * llm_graph_context::build_partial_rope(struct ggml_context * ctx, struct ggml_tensor * Qcur, struct ggml_tensor * rope_idx, 
+                                                    struct ggml_tensor * inp_pos, void* p_graph_ctx) const{
+    return ggml_map_custom3_inplace(ctx, Qcur, inp_pos, rope_idx,   
+                            partial_rope_impl, GGML_N_TASKS_MAX, p_graph_ctx);  
 }
 
 

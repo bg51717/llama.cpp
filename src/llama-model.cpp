@@ -1853,13 +1853,12 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         // layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
                         // layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
                         layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
-                        printf("n_embed=%d, mha2mla_rope_dim_for_mla=%d, mha2mla_low_rank=%d, n_head_kv=%d\n", n_embd, mha2mla_rope_dim_for_mla, mha2mla_low_rank, n_head_kv);
                         layer.wk_r = create_tensor(tn(LLM_TENSOR_ATTN_K_R, "weight", i), {n_embd, mha2mla_rope_dim_for_mla * n_head_kv}, 0);
                         layer.wdown_kv = create_tensor(tn(LLM_TENSOR_ATTN_DOWN_KV, "weight", i), {n_embd, mha2mla_low_rank*n_head_kv}, 0);
                         layer.wup_k = create_tensor(tn(LLM_TENSOR_ATTN_UP_K, "weight", i), {mha2mla_low_rank*n_head_kv, (n_embd_head_k-mha2mla_rope_dim_for_mla)*n_head_kv}, 0);
                         layer.wup_v = create_tensor(tn(LLM_TENSOR_ATTN_UP_V, "weight", i), {mha2mla_low_rank*n_head_kv, n_embd_head_k*n_head_kv}, 0);
-                        layer.rope_q_mask = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_Q_MASK, "weight", i), {n_embd_head_k * n_head}, 0);
-                        layer.rope_k_mask = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_K_MASK, "weight", i), {n_embd_head_k * n_head_kv}, 0);
+                        layer.rope_q_idx = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_Q_IDX, "weight", i), {mha2mla_rope_dim_for_mla * n_head}, 0);
+                        layer.rope_k_idx = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_K_IDX, "weight", i), {mha2mla_rope_dim_for_mla * n_head_kv}, 0);
 
                         // optional bias tensors
                         layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd},     TENSOR_NOT_REQUIRED);
@@ -4860,9 +4859,14 @@ struct llm_build_llama_mha2mla : public llm_graph_context {
                     hparams.mha2mla_rope_dim_for_mla * n_head * Qcur->nb[0]
                 ));
 
-                q_r  = ggml_reshape_3d(ctx0, q_r, hparams.mha2mla_rope_dim_for_mla, n_head,    n_tokens);
-                q_c  = ggml_reshape_3d(ctx0, q_c, n_embd_head - hparams.mha2mla_rope_dim_for_mla, n_head,    n_tokens);
-                k_r  = ggml_reshape_3d(ctx0, k_r, hparams.mha2mla_rope_dim_for_mla, n_head_kv, n_tokens);
+                q_r  = ggml_cont(ctx0, ggml_reshape_3d(ctx0, q_r, hparams.mha2mla_rope_dim_for_mla, n_head, n_tokens));
+                q_c  = ggml_cont(ctx0, ggml_reshape_3d(ctx0, q_c, n_embd_head - hparams.mha2mla_rope_dim_for_mla, n_head, n_tokens));
+                k_r  = ggml_cont(ctx0, ggml_reshape_3d(ctx0, k_r, hparams.mha2mla_rope_dim_for_mla, n_head_kv, n_tokens));
+
+                // q_r = build_partial_rope(ctx0, q_r, model.layers[il].rope_q_idx, inp_pos, (void*)this);
+                // cb(q_r, "q_r", il);
+                // k_r = build_partial_rope(ctx0, k_r, model.layers[il].rope_k_idx, inp_pos, (void*)this);
+                // cb(k_r, "k_r", il);
 
                 ggml_tensor * k_c = build_lora_mm(model.layers[il].wdown_kv, cur);
                 cb(k_c, "k_c", il);

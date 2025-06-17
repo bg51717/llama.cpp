@@ -276,9 +276,9 @@ class TensorNameMap:
             "model.layers.{bid}.self_attn.kv_proj.up_v",
         ),
 
-        MODEL_TENSOR.ATTN_ROPE_Q_MASK: (),
+        MODEL_TENSOR.ATTN_ROPE_Q_IDX: (),
         
-        MODEL_TENSOR.ATTN_ROPE_K_MASK: (),
+        MODEL_TENSOR.ATTN_ROPE_K_IDX: (),
 
         # Feed-forward norm
         MODEL_TENSOR.FFN_NORM: (
