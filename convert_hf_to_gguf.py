@@ -2018,7 +2018,7 @@ class LlamaModel(TextModel):
                 raise ValueError(f"Unprocessed experts: {experts}")
 
 @ModelBase.register("LlamaMHA2MLAForCausalLM")
-class LlamaMha2MLAModel(LlamaModel):
+class LlamaMHA2MLAModel(LlamaModel):
     """
     LlamaMha2MLA is a llama model that uses the MHA2MLA to migrate to the MLA.
     """
@@ -2026,8 +2026,11 @@ class LlamaMha2MLAModel(LlamaModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def set_gguf_parameters(self):
+    def set_gguf_parameters(self):  
         super().set_gguf_parameters()
+        model_config = json.load(open(self.dir_model / "config.json", "r", encoding="utf-8"))
+        self.gguf_writer.add_mha2mla_rope_dim_for_mla(model_config["mha2mla"]["rope_dim_for_mla"])
+        self.gguf_writer.add_mha2mla_low_rank(model_config["mha2mla"]["low_rank"])
 
 
     def partial_rope_mask(self, model_args, mha2mla_args):

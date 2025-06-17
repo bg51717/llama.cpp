@@ -531,6 +531,14 @@ struct llm_graph_context {
     // attention
     //
 
+    ggml_tensor * build_partial_rope(
+        struct ggml_context * ctx, 
+        struct ggml_tensor * Qcur,
+        struct ggml_tensor * rope_mask,
+        struct ggml_tensor * inp_pos, 
+        int n_rot, 
+        float freq_base) const;
+
     ggml_tensor * build_attn_mha(
              ggml_cgraph * gf,
              ggml_tensor * q,       // [n_embd_head_q, n_head_q, n_tokens]

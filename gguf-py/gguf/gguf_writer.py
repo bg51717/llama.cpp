@@ -831,6 +831,12 @@ class GGUFWriter:
     def add_rope_scaling_yarn_log_mul(self, value: float) -> None:
         self.add_float32(Keys.Rope.SCALING_YARN_LOG_MUL.format(arch=self.arch), value)
 
+    def add_mha2mla_rope_dim_for_mla(self, value: int) -> None:
+        self.add_uint32(Keys.MHA2MLA.ROPE_DIM_FOR_MLA.format(arch=self.arch), value)
+
+    def add_mha2mla_low_rank(self, value: int) -> None:
+        self.add_uint32(Keys.MHA2MLA.LOW_RANK.format(arch=self.arch), value)
+
     def add_ssm_conv_kernel(self, value: int) -> None:
         self.add_uint32(Keys.SSM.CONV_KERNEL.format(arch=self.arch), value)
 

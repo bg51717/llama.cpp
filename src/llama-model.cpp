@@ -572,9 +572,13 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     }
                 }
             } break;
-            case LLM_ARCH_LLAMA_MHA2MLA:
+        case LLM_ARCH_LLAMA_MHA2MLA:
             {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+
+                ml.get_key(LLM_KV_MHA2MLA_ROPE_DIM_FOR_MLA, hparams.mha2mla_rope_dim_for_mla);
+                ml.get_key(LLM_KV_MHA2MLA_LOW_RANK, hparams.mha2mla_low_rank);
+
 
                 if (hparams.n_expert == 8) {
                     switch (hparams.n_layer) {
@@ -1615,8 +1619,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         const int64_t n_expert_used = hparams.n_expert_used;
         const int64_t n_ctx_train   = hparams.n_ctx_train;
         // MHA2MLA
-        const int64_t mha2mla_low_rank      = hparams.mha2mla_low_rank;
-        const int64_t mha2mla_d_r           = hparams.mha2mla_d_r;
+        const int64_t mha2mla_low_rank                   = hparams.mha2mla_low_rank;
+        const int64_t mha2mla_rope_dim_for_mla           = hparams.mha2mla_rope_dim_for_mla;
 
         if (n_expert > 0 && hparams.n_expert_used == 0) {
             throw std::runtime_error("model has expert layers but no expert layers are used");
@@ -1849,21 +1853,22 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         // layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
                         // layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
                         layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
-                        layer.wk_r = create_tensor(tn(LLM_TENSOR_ATTN_K_R, "weight", i), {n_embd, mha2mla_d_r * n_head_kv}, 0);
-                        layer.wdown_kv = create_tensor(tn(LLM_TENSOR_ATTN_DOWN_KV, "weight", i), {(2*n_embd_head_k-mha2mla_d_r)*n_head_kv, mha2mla_low_rank*n_head_kv}, 0);
-                        layer.wup_k = create_tensor(tn(LLM_TENSOR_ATTN_UP_K, "weight", i), {mha2mla_low_rank*n_head_kv, (n_embd_head_k-mha2mla_d_r)*n_head_kv}, 0);
+                        printf("n_embed=%d, mha2mla_rope_dim_for_mla=%d, mha2mla_low_rank=%d, n_head_kv=%d\n", n_embd, mha2mla_rope_dim_for_mla, mha2mla_low_rank, n_head_kv);
+                        layer.wk_r = create_tensor(tn(LLM_TENSOR_ATTN_K_R, "weight", i), {n_embd, mha2mla_rope_dim_for_mla * n_head_kv}, 0);
+                        layer.wdown_kv = create_tensor(tn(LLM_TENSOR_ATTN_DOWN_KV, "weight", i), {n_embd, mha2mla_low_rank*n_head_kv}, 0);
+                        layer.wup_k = create_tensor(tn(LLM_TENSOR_ATTN_UP_K, "weight", i), {mha2mla_low_rank*n_head_kv, (n_embd_head_k-mha2mla_rope_dim_for_mla)*n_head_kv}, 0);
                         layer.wup_v = create_tensor(tn(LLM_TENSOR_ATTN_UP_V, "weight", i), {mha2mla_low_rank*n_head_kv, n_embd_head_k*n_head_kv}, 0);
-                        layer.rope_q_mask = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_Q_MASK, "weight", i), {mha2mla_d_r * n_head}, 0);
-                        layer.rope_k_mask = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_K_MASK, "weight", i), {mha2mla_d_r * n_head_kv}, 0);
+                        layer.rope_q_mask = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_Q_MASK, "weight", i), {n_embd_head_k * n_head}, 0);
+                        layer.rope_k_mask = create_tensor(tn(LLM_TENSOR_ATTN_ROPE_K_MASK, "weight", i), {n_embd_head_k * n_head_kv}, 0);
 
                         // optional bias tensors
                         layer.bq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "bias", i), {n_embd},     TENSOR_NOT_REQUIRED);
                         // layer.bk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "bias", i), {n_embd_gqa}, TENSOR_NOT_REQUIRED);
                         // layer.bv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "bias", i), {n_embd_gqa}, TENSOR_NOT_REQUIRED);
                         layer.bo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "bias", i), {n_embd},     TENSOR_NOT_REQUIRED);
-                        layer.bk_r = create_tensor(tn(LLM_TENSOR_ATTN_K_R, "bias", i), {mha2mla_d_r * n_head_kv}, TENSOR_NOT_REQUIRED);
+                        layer.bk_r = create_tensor(tn(LLM_TENSOR_ATTN_K_R, "bias", i), {mha2mla_rope_dim_for_mla * n_head_kv}, TENSOR_NOT_REQUIRED);
                         layer.bdown_kv = create_tensor(tn(LLM_TENSOR_ATTN_DOWN_KV, "bias", i), {mha2mla_low_rank*n_head_kv}, TENSOR_NOT_REQUIRED);
-                        layer.bup_k = create_tensor(tn(LLM_TENSOR_ATTN_UP_K, "bias", i), {(n_embd_head_k-mha2mla_d_r)*n_head_kv}, TENSOR_NOT_REQUIRED);
+                        layer.bup_k = create_tensor(tn(LLM_TENSOR_ATTN_UP_K, "bias", i), {(n_embd_head_k-mha2mla_rope_dim_for_mla)*n_head_kv}, TENSOR_NOT_REQUIRED);
                         layer.bup_v = create_tensor(tn(LLM_TENSOR_ATTN_UP_V, "bias", i), {n_embd_head_k*n_head_kv}, TENSOR_NOT_REQUIRED);
 
                         layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
@@ -4802,7 +4807,7 @@ struct llm_build_llama_mha2mla : public llm_graph_context {
         inpL = build_inp_embd(model.tok_embd);
 
         // inp_pos - contains the positions
-        ggml_tensor * inp_pos = build_inp_pos();
+        // ggml_tensor * inp_pos = build_inp_pos();
 
         auto * inp_attn = build_attn_inp_kv_unified();
 
@@ -4829,76 +4834,69 @@ struct llm_build_llama_mha2mla : public llm_graph_context {
                     Qcur = ggml_add(ctx0, Qcur, model.layers[il].bq);
                     cb(Qcur, "Qcur", il);
                 }
-                
-                ggml_tensor * q_r = ggml_view_2d(
-                    ctx0, Qcur,
-                    hparams.mha2mla_d_r * n_head,
-                    Qcur->ne[1],
-                    Qcur->nb[1],
-                    0
-                );
-
-                ggml_tensor * q_c = ggml_view_2d(
-                    ctx0, Qcur,
-                    Qcur->ne[0] - hparams.mha2mla_d_r * n_head,
-                    Qcur->ne[1],
-                    Qcur->nb[1],
-                    hparams.mha2mla_d_r * n_head * Qcur->nb[0]
-                );
-
-                ggml_tensor * Qcur = ggml_new_tensor_2d(
-                    ctx0, GGML_TYPE_F32,
-                    Qcur->ne[0],    n_tokens
-                );
-
-                
-                
 
                 ggml_tensor * k_r = build_lora_mm(model.layers[il].wk_r, cur);
                 cb(k_r, "k_r", il);
+                if (model.layers[il].bk_r) {
+                    k_r = ggml_add(ctx0, k_r, model.layers[il].bk_r);
+                    cb(k_r, "k_r", il);
+                }
 
-                q_r = ggmla_reshape_3d(ctx0, q_r, hparams.mha2mla_d_r, n_head,    n_tokens);
-                k_r = ggmla_reshape_3d(ctx0, k_r, hparams.mha2mla_d_r, n_head_kv, n_tokens);
+                ggml_tensor * q_r = ggml_cont(ctx0,
+                    ggml_view_2d(
+                        ctx0, Qcur,
+                        hparams.mha2mla_rope_dim_for_mla * n_head,
+                        Qcur->ne[1],
+                        Qcur->nb[1],
+                        0
+                    )
+                );
 
+                ggml_tensor * q_c = ggml_cont(ctx0,ggml_view_2d(
+                    ctx0, Qcur,
+                    Qcur->ne[0] - hparams.mha2mla_rope_dim_for_mla * n_head,
+                    Qcur->ne[1],
+                    Qcur->nb[1],
+                    hparams.mha2mla_rope_dim_for_mla * n_head * Qcur->nb[0]
+                ));
 
+                q_r  = ggml_reshape_3d(ctx0, q_r, hparams.mha2mla_rope_dim_for_mla, n_head,    n_tokens);
+                q_c  = ggml_reshape_3d(ctx0, q_c, n_embd_head - hparams.mha2mla_rope_dim_for_mla, n_head,    n_tokens);
+                k_r  = ggml_reshape_3d(ctx0, k_r, hparams.mha2mla_rope_dim_for_mla, n_head_kv, n_tokens);
 
-                // ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur);
-                // cb(Kcur, "Kcur", il);
-                // if (model.layers[il].bk) {
-                //     Kcur = ggml_add(ctx0, Kcur, model.layers[il].bk);
-                //     cb(Kcur, "Kcur", il);
-                // }
+                ggml_tensor * k_c = build_lora_mm(model.layers[il].wdown_kv, cur);
+                cb(k_c, "k_c", il);
+                if (model.layers[il].bdown_kv) {
+                    k_c = ggml_add(ctx0, k_c, model.layers[il].bdown_kv);
+                    cb(k_c, "k_c", il);
+                }
+                ggml_tensor * v = k_c;
+                
+                k_c = build_lora_mm(model.layers[il].wup_k, k_c);
+                cb(k_c, "k_c", il);
+                if (model.layers[il].bup_k) {
+                    k_c = ggml_add(ctx0, k_c, model.layers[il].bup_k);
+                    cb(k_c, "k_c", il);
+                }
 
-                // ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
-                // cb(Vcur, "Vcur", il);
-                // if (model.layers[il].bv) {
-                //     Vcur = ggml_add(ctx0, Vcur, model.layers[il].bv);
-                //     cb(Vcur, "Vcur", il);
-                // }
+                v = build_lora_mm(model.layers[il].wup_v, v);
+                cb(v, "Vcur", il);
+                if (model.layers[il].bup_v) {
+                    v = ggml_add(ctx0, v, model.layers[il].bup_v);
+                    cb(v, "Vcur", il);
+                }
 
-                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
-                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
-                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
+                k_c = ggml_reshape_3d(ctx0, k_c, n_embd_head - hparams.mha2mla_rope_dim_for_mla, n_head_kv, n_tokens);
+                v  = ggml_reshape_3d(ctx0, v, n_embd_head , n_head_kv, n_tokens);
 
-                Qcur = ggml_rope_ext(
-                        ctx0, Qcur, inp_pos, rope_factors,
-                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
-                        ext_factor, attn_factor, beta_fast, beta_slow
-                        );
-
-                Kcur = ggml_rope_ext(
-                        ctx0, Kcur, inp_pos, rope_factors,
-                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
-                        ext_factor, attn_factor, beta_fast, beta_slow
-                        );
-
+                Qcur = ggml_cont(ctx0, ggml_concat(ctx0, q_r, q_c, 0));
                 cb(Qcur, "Qcur", il);
+                ggml_tensor * Kcur = ggml_cont(ctx0, ggml_concat(ctx0, k_r, k_c, 0));
                 cb(Kcur, "Kcur", il);
-                cb(Vcur, "Vcur", il);
 
                 cur = build_attn(inp_attn, gf,
                         model.layers[il].wo, model.layers[il].bo,
-                        Qcur, Kcur, Vcur, nullptr, nullptr, kq_scale, il);
+                        Qcur, Kcur, v, nullptr, nullptr, kq_scale, il);
                 cb(cur, "attn_out", il);
             }
 

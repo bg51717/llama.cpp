@@ -154,6 +154,10 @@ class Keys:
         SCALING_FINETUNED       = "{arch}.rope.scaling.finetuned"
         SCALING_YARN_LOG_MUL    = "{arch}.rope.scaling.yarn_log_multiplier"
 
+    class MHA2MLA:
+        LOW_RANK                      = "{arch}.mha2mla.low_rank"
+        ROPE_DIM_FOR_MLA              = "{arch}.mha2mla.rope_dim_for_mla"
+
     class Split:
         LLM_KV_SPLIT_NO            = "split.no"
         LLM_KV_SPLIT_COUNT         = "split.count"
