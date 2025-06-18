@@ -4806,7 +4806,7 @@ struct llm_build_llama_mha2mla : public llm_graph_context {
         inpL = build_inp_embd(model.tok_embd);
 
         // inp_pos - contains the positions
-        // ggml_tensor * inp_pos = build_inp_pos();
+        ggml_tensor * inp_pos = build_inp_pos();
 
         auto * inp_attn = build_attn_inp_kv_unified();
 
@@ -4863,10 +4863,10 @@ struct llm_build_llama_mha2mla : public llm_graph_context {
                 q_c  = ggml_cont(ctx0, ggml_reshape_3d(ctx0, q_c, n_embd_head - hparams.mha2mla_rope_dim_for_mla, n_head, n_tokens));
                 k_r  = ggml_cont(ctx0, ggml_reshape_3d(ctx0, k_r, hparams.mha2mla_rope_dim_for_mla, n_head_kv, n_tokens));
 
-                // q_r = build_partial_rope(ctx0, q_r, model.layers[il].rope_q_idx, inp_pos, (void*)this);
-                // cb(q_r, "q_r", il);
-                // k_r = build_partial_rope(ctx0, k_r, model.layers[il].rope_k_idx, inp_pos, (void*)this);
-                // cb(k_r, "k_r", il);
+                q_r = build_partial_rope(ctx0, q_r, model.layers[il].rope_q_idx, inp_pos, n_rot, hparams.mha2mla_rope_dim_for_mla, freq_base);
+                cb(q_r, "q_r", il);
+                k_r = build_partial_rope(ctx0, k_r, model.layers[il].rope_k_idx, inp_pos, n_rot, hparams.mha2mla_rope_dim_for_mla, freq_base);
+                cb(k_r, "k_r", il);
 
                 ggml_tensor * k_c = build_lora_mm(model.layers[il].wdown_kv, cur);
                 cb(k_c, "k_c", il);

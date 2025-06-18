@@ -1059,12 +1059,20 @@ ggml_tensor * llm_graph_context::build_pos_bias(ggml_tensor * pos_bucket, ggml_t
     return pos_bias;
 }
 
-void partial_rope_impl(struct ggml_tensor * ctx,const struct ggml_tensor * src, const struct ggml_tensor * pos_tensor, const struct ggml_tensor * rope_idx, int ith, int nth, void * p_graph_ctx) {
+struct Partial_RoPE_Params {
+    int n_rot;
+    int rope_dim_for_mla;
+    float freq_base;
+};
+
+void partial_rope_impl(struct ggml_tensor * dst,const struct ggml_tensor * src, const struct ggml_tensor * pos_tensor, const struct ggml_tensor * rope_idx, int ith, int nth, void * partial_rope_params) {
     
-    // int n_rot = ((struct llama_graph_context *)p_graph_ctx)->hparams->mha2mla_rope_dim_for_mla;
-    // float freq_base = ((struct llama_graph_context *)p_graph_ctx)->freq_base;
-    int n_rot = 8;
-    float freq_base = 10000.0f;
+    int n_rot = ((struct Partial_RoPE_Params *)partial_rope_params)->n_rot;
+    int rope_dim_for_mla = ((struct Partial_RoPE_Params *)partial_rope_params)->rope_dim_for_mla;
+    float freq_base = ((struct Partial_RoPE_Params *)partial_rope_params)->freq_base;
+
+    // int n_rot = 8;
+    // float freq_base = 10000.0f;
     const int ne0 = src->ne[0];  // head_dim
     const int ne1 = src->ne[1];  // n_head
     const int ne2 = src->ne[2];  // n_tokens
@@ -1076,12 +1084,13 @@ void partial_rope_impl(struct ggml_tensor * ctx,const struct ggml_tensor * src, 
   
         for (int i1 = ith; i1 < ne1; i1 += nth) {  // heads
             // dim
-            for (int i0 = 0; i0 < n_rot/2; i0 += 1) {
-                float * rope_idx_ptr = (float*)rope_idx->data + i1 * n_rot + i0 * rope_idx->nb[0];
-                int rope_test_data  = (int) rope_idx_ptr[0];
+            for (int i0 = 0; i0 < rope_dim_for_mla/2; i0 += 1) {
+                float * rope_idx_ptr = (float *)((char *)rope_idx->data + (i1 * rope_dim_for_mla + i0) * rope_idx->nb[0]);
+                int original_rope_idx  = (int) rope_idx_ptr[0];
+                int cur_rope_idx = original_rope_idx % n_rot; // current rope index
                 
                 // theta
-                const float theta     = p * powf(freq_base, -rope_test_data / (float) n_rot);
+                const float theta     = p * powf(freq_base, - cur_rope_idx * 2.0 / (float) n_rot);
                 const float cos_theta = cosf(theta);
                 const float sin_theta = sinf(theta);
 
@@ -1090,24 +1099,93 @@ void partial_rope_impl(struct ggml_tensor * ctx,const struct ggml_tensor * src, 
                     (float *) ((char *) src->data + i2 * src->nb[2] + i1 * src->nb[1] + i0 * src->nb[0]);
 
                 // dst data pointer
-                float * dst_ptr = (float *) ((char *) src->data + i2 * src->nb[2] + i1 * src->nb[1] + i0 * src->nb[0]);
+                float * dst_ptr = (float *) ((char *) dst->data + i2 * dst->nb[2] + i1 * dst->nb[1] + i0 * dst->nb[0]);
 
                 // data
                 const float x0 = src_ptr[0];
-                const float x1 = src_ptr[int(n_rot/2)];
+                const float x1 = src_ptr[int(rope_dim_for_mla/2)];
 
                 // apply rotation
                 dst_ptr[0] = x0 * cos_theta - x1 * sin_theta;
-                dst_ptr[int(n_rot/2)] = x0 * sin_theta + x1 * cos_theta;
+                dst_ptr[int(rope_dim_for_mla/2)] = x0 * sin_theta + x1 * cos_theta;
             }
         }
     }
 }
 
+
+// void partial_rope_impl(struct ggml_tensor * ctx, struct ggml_tensor * src, const struct ggml_tensor * pos_tensor, 
+//     const struct ggml_tensor * rope_idx, int ith, int nth, 
+//     void * partial_rope_params) {
+
+// int n_rot = ((struct Partial_RoPE_Params *)partial_rope_params)->n_rot;
+// int rope_dim_for_mla = ((struct Partial_RoPE_Params *)partial_rope_params)->rope_dim_for_mla;
+// float freq_base = ((struct Partial_RoPE_Params *)partial_rope_params)->freq_base;
+
+// const int ne0 = src->ne[0];  // head_dim
+// const int ne1 = src->ne[1];  // n_head
+// const int ne2 = src->ne[2];  // n_tokens
+
+// const int32_t * pos = (const int32_t *) pos_tensor->data;
+// const int32_t * rope_indices = (const int32_t *) rope_idx->data;
+
+// for (int i2 = 0; i2 < ne2; i2++) {             // tokens
+// const int64_t p = pos[i2];                 // position
+
+// for (int i1 = ith; i1 < ne1; i1 += nth) {  // heads
+
+// float * data_ptr = (float *) ((char *) src->data + i2 * src->nb[2] + i1 * src->nb[1]);
+
+// // 获取当前head的rope索引起始位置
+// int rope_idx_base = i1 * rope_dim_for_mla;
+
+// // 需要临时存储要修改的值，因为是inplace操作
+// float temp_values[rope_dim_for_mla];
+
+// // 先读取所有需要旋转的维度的值
+// for (int i = 0; i < rope_dim_for_mla; i++) {
+// int dim_idx = rope_indices[rope_idx_base + i];
+// temp_values[i] = data_ptr[dim_idx];
+// }
+
+// // 对前半部分的每个维度应用旋转
+// for (int half_idx = 0; half_idx < rope_dim_for_mla/2; half_idx++) {
+
+// // 获取前半部分和后半部分的维度索引
+// int front_dim_idx = rope_indices[rope_idx_base + half_idx];
+// int back_dim_idx = rope_indices[rope_idx_base + half_idx + rope_dim_for_mla/2];
+
+// // 计算旋转频率 - 使用half_idx作为频率索引
+// int freq_idx = half_idx % n_rot;
+
+// // 计算theta
+// const float theta = p * powf(freq_base, -freq_idx * 2.0f / (float) n_rot);
+// const float cos_theta = cosf(theta);
+// const float sin_theta = sinf(theta);
+
+// // 从临时数组获取要旋转的元素
+// const float x_front = temp_values[half_idx];                    // 前半部分元素
+// const float x_back = temp_values[half_idx + rope_dim_for_mla/2]; // 后半部分元素
+
+// // 应用RoPE旋转 (inplace修改)
+// // 基于rotate_half的逻辑: 前半部分与后半部分的负值配对
+// data_ptr[front_dim_idx] = x_front * cos_theta - x_back * sin_theta;
+// data_ptr[back_dim_idx] = x_front * sin_theta + x_back * cos_theta;
+// }
+// }
+// }
+// }
+
+
 ggml_tensor * llm_graph_context::build_partial_rope(struct ggml_context * ctx, struct ggml_tensor * Qcur, struct ggml_tensor * rope_idx, 
-                                                    struct ggml_tensor * inp_pos, void* p_graph_ctx) const{
-    return ggml_map_custom3_inplace(ctx, Qcur, inp_pos, rope_idx,   
-                            partial_rope_impl, GGML_N_TASKS_MAX, p_graph_ctx);  
+                                                    struct ggml_tensor * inp_pos, int n_rot, int rope_dim_for_mla, float freq_base) const{
+    static const struct Partial_RoPE_Params partial_rope_params = {
+        .n_rot = n_rot,
+        .rope_dim_for_mla = rope_dim_for_mla,
+        .freq_base = freq_base
+    };
+    return ggml_map_custom3(ctx, Qcur, inp_pos, rope_idx,   
+                            partial_rope_impl, 1, (void*)&partial_rope_params);
 }
 
 
