@@ -2031,8 +2031,19 @@ class LlamaMHA2MLAModel(LlamaModel):
         super().__init__(*args, **kwargs)
 
     def set_gguf_parameters(self):  
+        self.hparams["num_key_value_heads"] = 1
+        if "head_dim" in self.hparams:
+            head_dim = self.hparams["head_dim"]
+        else:
+            head_dim = self.hparams["hidden_size"] // self.hparams["num_attention_heads"]
+        self.hparams.pop("head_dim")
         super().set_gguf_parameters()
         model_config = json.load(open(self.dir_model / "config.json", "r", encoding="utf-8"))
+        self.hparams["num_key_value_heads"] = 1
+        self.gguf_writer.add_key_length(model_config["mha2mla"]["rope_dim_for_mla"]*model_config["num_key_value_heads"])
+        self.gguf_writer.add_value_length(model_config["mha2mla"]["low_rank"]*model_config["num_key_value_heads"])
+        self.gguf_writer.add_key_length_mla(head_dim)
+        self.gguf_writer.add_value_length_mla(head_dim)
         self.gguf_writer.add_mha2mla_rope_dim_for_mla(model_config["mha2mla"]["rope_dim_for_mla"])
         self.gguf_writer.add_mha2mla_low_rank(model_config["mha2mla"]["low_rank"])
 

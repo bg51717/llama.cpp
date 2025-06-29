@@ -580,6 +580,35 @@ struct llm_graph_context {
                   float   kq_scale,
                     int   il) const;
 
+    ggml_tensor * build_attn_mha2mla_prefill(
+        llm_graph_input_attn_kv_unified * inp,
+        ggml_cgraph * gf,
+        ggml_tensor * w_up_k, // [d_mid, d_k_out]
+        ggml_tensor * w_up_v,
+        ggml_tensor * wo,
+        ggml_tensor * wo_b,
+        ggml_tensor * q_r_cur, // [n_embd, n_head, n_tokens]
+        ggml_tensor * q_c_cur,
+        ggml_tensor * k_r_cur,
+        ggml_tensor * k_c_cur,
+        ggml_tensor * kq_b,
+            float     kq_scale,
+            int       il) const ;
+
+    ggml_tensor * build_attn_mha2mla_decode(
+            llm_graph_input_attn_kv_unified * inp,
+            ggml_cgraph * gf,
+            ggml_tensor * w_up_v,
+            ggml_tensor * wo,
+            ggml_tensor * wo_b,
+            ggml_tensor * q_r_cur, // [n_embd, n_head, n_tokens]
+            ggml_tensor * q_c_cur,
+            ggml_tensor * k_r_cur,
+            ggml_tensor * k_c_cur,
+            ggml_tensor * kq_b,
+                float     kq_scale,
+                int       il) const;
+
     llm_graph_input_attn_kv_unified_iswa * build_attn_inp_kv_unified_iswa() const;
 
     ggml_tensor * build_attn(
