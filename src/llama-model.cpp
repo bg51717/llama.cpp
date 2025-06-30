@@ -4880,9 +4880,18 @@ struct llm_build_llama_mha2mla : public llm_graph_context {
                     cb(k_c_cur, "k_c_cur", il);
                 }
 
-                cur = build_attn_mha2mla_prefill(inp_attn, gf, model.layers[il].wup_k, model.layers[il].wup_v,
-                        model.layers[il].wo, model.layers[il].bo,
-                        q_r_cur, q_c_cur, k_r_cur, k_c_cur, nullptr, kq_scale, il);
+                cur = build_attn_mha2mla_decode(inp_attn, gf, model.layers[il].wup_k, model.layers[il].wup_v,
+                    model.layers[il].wo, model.layers[il].bo,
+                    q_r_cur, q_c_cur, k_r_cur, k_c_cur, nullptr, kq_scale, il);
+                // if (q_r_cur->ne[0]!=1){
+                //     cur = build_attn_mha2mla_prefill(inp_attn, gf, model.layers[il].wup_k, model.layers[il].wup_v,
+                //         model.layers[il].wo, model.layers[il].bo,
+                //         q_r_cur, q_c_cur, k_r_cur, k_c_cur, nullptr, kq_scale, il);
+                // }else{
+                //     cur = build_attn_mha2mla_decode(inp_attn, gf, model.layers[il].wup_k, model.layers[il].wup_v,
+                //         model.layers[il].wo, model.layers[il].bo,
+                //         q_r_cur, q_c_cur, k_r_cur, k_c_cur, nullptr, kq_scale, il);
+                // }
                 cb(cur, "attn_out", il);
             }
 

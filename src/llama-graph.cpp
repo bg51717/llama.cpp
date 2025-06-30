@@ -1410,7 +1410,6 @@ ggml_tensor * llm_graph_context::build_attn_mha2mla_prefill(
     ggml_tensor * k_r = kv_state->get_k(ctx0, il);
     ggml_tensor * k_c = kv_state->get_v(ctx0, il);
 
-    ggml_build_forward_expand(gf, k_c);
 
     int n_tokens = k_r->ne[2];
     k_r = ggml_reshape_3d(ctx0, k_r, hparams.mha2mla_rope_dim_for_mla, n_head_kv, n_tokens);
@@ -1419,33 +1418,21 @@ ggml_tensor * llm_graph_context::build_attn_mha2mla_prefill(
     k_c = ggml_cast(ctx0, k_c, GGML_TYPE_F32);
     cb(k_c, "k_c_cast", il);
     k_c = ggml_cont(ctx0, ggml_permute(ctx0, k_c, 2,1,0,3));
-    ggml_build_forward_expand(gf, k_c);
     ggml_tensor * V = k_c;
-    ggml_build_forward_expand(gf, V);
     k_c = ggml_reshape_3d(ctx0, k_c, hparams.mha2mla_low_rank * n_head_kv, 1, n_tokens);
     cb(k_c, "k_c_reshaped_1", il);
-    ggml_build_forward_expand(gf, k_c);
     k_c = build_lora_mm(w_up_k, k_c);
     cb(k_c, "k_c_up", il);
-    ggml_build_forward_expand(gf, k_c);
     k_c = ggml_reshape_3d(ctx0, k_c, hparams.n_embd_head_k_mla - hparams.mha2mla_rope_dim_for_mla, n_head_kv, n_tokens);
     cb(k_c, "k_c_reshaped_2", il);
-    ggml_build_forward_expand(gf, k_c);
-
 
     ggml_tensor * Q = ggml_cont(ctx0, ggml_concat(ctx0, q_r_cur, q_c_cur, 0));
     cb(Q, "Q", il);
     ggml_tensor * K = ggml_cont(ctx0, ggml_concat(ctx0, k_r, k_c, 0));
     cb(K, "K", il);
     V = build_lora_mm(w_up_v, V);
-    ggml_build_forward_expand(gf, V);
     V = ggml_reshape_3d(ctx0, V, hparams.n_embd_head_k_mla, n_head_kv, n_tokens);
-    ggml_build_forward_expand(gf, V);
     cb(V, "V", il);
-
-    ggml_build_forward_expand(gf, Q);
-    ggml_build_forward_expand(gf, K);
-    ggml_build_forward_expand(gf, V);
 
     ggml_tensor * cur = build_attn_mha(gf, Q, K, V, kq_b, kq_mask, nullptr, kq_scale);
     cb(cur, "kqv_out", il);
@@ -1468,7 +1455,8 @@ ggml_tensor * llm_graph_context::build_attn_mha2mla_prefill(
 ggml_tensor * llm_graph_context::build_attn_mha2mla_decode(
         llm_graph_input_attn_kv_unified * inp,
         ggml_cgraph * gf,
-        ggml_tensor * w_up_v, // [n_embd_in, e_embed_out, n_head]
+        ggml_tensor * w_up_k, // [d_mid, d_k_out]
+        ggml_tensor * w_up_v,
         ggml_tensor * wo,
         ggml_tensor * wo_b,
         ggml_tensor * q_r_cur, // [n_embd, n_head, n_tokens]
@@ -1488,6 +1476,7 @@ ggml_tensor * llm_graph_context::build_attn_mha2mla_decode(
     ggml_build_forward_expand(gf, k_c_cur);
 
     const auto * kv_state = static_cast<const llama_kv_cache_unified_state *>(mstate);
+    k_c_cur = ggml_permute(ctx0, k_c_cur, 0, 2, 1, 3);
 
     // store to KV cache
     {
@@ -1500,21 +1489,37 @@ ggml_tensor * llm_graph_context::build_attn_mha2mla_decode(
     ggml_tensor * k_r = kv_state->get_k(ctx0, il);
     ggml_tensor * k_c = kv_state->get_v(ctx0, il);
 
+    k_c = ggml_cont(ctx0, ggml_permute(ctx0, k_c, 2, 1, 0, 3));
 
-    ggml_tensor * q_r = ggml_permute(ctx0, q_r_cur, 0, 2, 1, 3); // [n_embd, n_tokens, n_head]
-    ggml_tensor * q_c = ggml_permute(ctx0, q_c_cur, 0, 2, 1, 3);
+    // martix absorb
+    const int n_head_kv = hparams.n_embd_head_k / hparams.mha2mla_rope_dim_for_mla;
+    int d_mid = hparams.mha2mla_low_rank * n_head_kv;
+    int n_embed_head = hparams.n_embd_head_k_mla; // original head dimension
+    w_up_k = ggml_reshape_3d(ctx0, w_up_k, d_mid, q_c_cur->ne[0], n_head_kv);
+    w_up_k = ggml_cont(ctx0, ggml_permute(ctx0, w_up_k, 1, 0, 2, 3));
+    // [q_head_dim, d_mid, n_head_kv] x [q_head_dim, n_tokens, n_head] -> [d_mid, n_tokens, n_head]
+    q_c_cur = build_lora_mm(w_up_k, ggml_permute(ctx0, q_c_cur, 0, 2, 1, 3));
+    ggml_mul_mat_set_prec(q_c_cur, GGML_PREC_F32);
+    cb(q_c_cur, "q_c_absorbed", il);
+    
+    k_c = ggml_reshape_3d(ctx0, k_c, k_c->ne[0], 1, k_c->ne[2]);
+    cb(k_c, "k_c_reshaped", il);
+    w_up_v = ggml_reshape_3d(ctx0, w_up_v, d_mid, n_embed_head, n_head_kv);
+
+
+    q_r_cur = ggml_permute(ctx0, q_r_cur, 0, 2, 1, 3); // [n_embd, n_tokens, n_head]
+    k_r = ggml_cont_3d(ctx0, k_r, hparams.mha2mla_rope_dim_for_mla, n_head_kv, k_r->ne[2]);
     k_r = ggml_permute(ctx0, k_r, 0, 2, 1, 3);
     k_c = ggml_permute(ctx0, k_c, 0, 2, 1, 3);
 
     ggml_tensor * cur;
 
-    ggml_tensor * kq_r = ggml_mul_mat(ctx0, k_r, q_r);
+    ggml_tensor * kq_r = ggml_mul_mat(ctx0, k_r, q_r_cur);
     ggml_mul_mat_set_prec(kq_r, GGML_PREC_F32);
 
-    ggml_tensor * kq_c = ggml_mul_mat(ctx0, k_c, q_c);
+    ggml_tensor * kq_c = ggml_mul_mat(ctx0, k_c, q_c_cur);
     ggml_mul_mat_set_prec(kq_c, GGML_PREC_F32);
     ggml_tensor * kq = ggml_add(ctx0, kq_r, kq_c);
-    ggml_mul_mat_set_prec(kq, GGML_PREC_F32);
 
     if (hparams.attn_soft_cap) {
         kq = ggml_scale(ctx0, kq, 1.0f / hparams.f_attn_logit_softcapping);
@@ -1528,9 +1533,11 @@ ggml_tensor * llm_graph_context::build_attn_mha2mla_decode(
 
     kq = ggml_soft_max_ext(ctx0, kq, kq_mask, kq_scale, hparams.f_max_alibi_bias);
 
+    k_c = ggml_cont(ctx0, ggml_permute(ctx0, k_c, 1, 0, 2, 3));
     ggml_tensor * kqv = ggml_mul_mat(ctx0, k_c, kq);
 
-    kqv = ggml_mul_mat(ctx0, w_up_v, kqv); // [n_embd_in, e_embed_out, n_tokens]
+    // [d_mid, n_embed_head, n_head_kv] x [d_mid, n_tokens, n_head] -> [n_embed_head, n_tokens, n_head]
+    kqv = ggml_mul_mat(ctx0, w_up_v, kqv); 
 
     cur = ggml_permute(ctx0, kqv, 0, 2, 1, 3);
 
