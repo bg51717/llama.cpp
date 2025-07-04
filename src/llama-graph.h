@@ -678,3 +678,5 @@ struct llm_graph_context {
 
 // TODO: better name
 int32_t llama_relative_position_bucket(llama_pos x, llama_pos y, uint64_t n_buckets, bool bidirectional);
+
+void partial_rope_impl(struct ggml_tensor * dst,const struct ggml_tensor * src, const struct ggml_tensor * pos_tensor, const struct ggml_tensor * rope_idx, int ith, int nth, void * partial_rope_params) ;

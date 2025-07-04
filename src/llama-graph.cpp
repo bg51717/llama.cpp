@@ -1071,9 +1071,7 @@ void partial_rope_impl(struct ggml_tensor * dst,const struct ggml_tensor * src, 
     int rope_dim_for_mla = ((struct Partial_RoPE_Params *)partial_rope_params)->rope_dim_for_mla;
     float freq_base = ((struct Partial_RoPE_Params *)partial_rope_params)->freq_base;
 
-    // int n_rot = 8;
-    // float freq_base = 10000.0f;
-    const int ne0 = src->ne[0];  // head_dim
+    // const int ne0 = src->ne[0];  // head_dim
     const int ne1 = src->ne[1];  // n_head
     const int ne2 = src->ne[2];  // n_tokens
 
@@ -1117,11 +1115,7 @@ void partial_rope_impl(struct ggml_tensor * dst,const struct ggml_tensor * src, 
 
 ggml_tensor * llm_graph_context::build_partial_rope(struct ggml_context * ctx, struct ggml_tensor * Qcur, struct ggml_tensor * rope_idx, 
                                                     struct ggml_tensor * inp_pos, int n_rot, int rope_dim_for_mla, float freq_base) const{
-    static const struct Partial_RoPE_Params partial_rope_params = {
-        .n_rot = n_rot,
-        .rope_dim_for_mla = rope_dim_for_mla,
-        .freq_base = freq_base
-    };
+    static struct Partial_RoPE_Params partial_rope_params = {n_rot, rope_dim_for_mla, freq_base};
     return ggml_map_custom3(ctx, Qcur, inp_pos, rope_idx,   
                             partial_rope_impl, GGML_N_TASKS_MAX, (void*)&partial_rope_params);
 }

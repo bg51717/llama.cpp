@@ -196,6 +196,8 @@ struct llama_layer {
     struct ggml_tensor * wup_v     = nullptr;
     struct ggml_tensor * rope_q_idx  = nullptr;
     struct ggml_tensor * rope_k_idx  = nullptr;
+    struct ggml_tensor * attn_k_r_norm = nullptr;
+    struct ggml_tensor * attn_k_c_norm = nullptr;
 
     // attention bias
     struct ggml_tensor * bq   = nullptr;

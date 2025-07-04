@@ -282,6 +282,7 @@ class MODEL_ARCH(IntEnum):
     MMPROJ           = auto() # dummy arch for clip.cpp
     LLAMA            = auto()
     LLAMA_MHA2MLA    = auto()
+    LLAMA_MHA2MLA_ABSORB = auto()
     LLAMA4           = auto()
     DECI             = auto()
     FALCON           = auto()
@@ -304,6 +305,7 @@ class MODEL_ARCH(IntEnum):
     QWEN2MOE         = auto()
     QWEN2VL          = auto()
     QWEN3            = auto()
+    QWEN3_MHA2MLA    = auto()
     QWEN3MOE         = auto()
     PHI2             = auto()
     PHI3             = auto()
@@ -386,6 +388,8 @@ class MODEL_TENSOR(IntEnum):
     ATTN_UP_V            = auto()
     ATTN_ROPE_Q_IDX      = auto()
     ATTN_ROPE_K_IDX      = auto()
+    ATTN_K_R_NORM        = auto()
+    ATTN_K_C_NORM        = auto()
     FFN_GATE_INP         = auto()
     FFN_GATE_INP_SHEXP   = auto()
     FFN_NORM             = auto()
@@ -569,6 +573,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.MMPROJ:           "clip", # dummy arch for clip.cpp
     MODEL_ARCH.LLAMA:            "llama",
     MODEL_ARCH.LLAMA_MHA2MLA:    "llama-mha2mla",
+    MODEL_ARCH.LLAMA_MHA2MLA_ABSORB: "llama-mha2mla_absorb",
     MODEL_ARCH.LLAMA4:           "llama4",
     MODEL_ARCH.DECI:             "deci",
     MODEL_ARCH.FALCON:           "falcon",
@@ -591,6 +596,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.QWEN2MOE:         "qwen2moe",
     MODEL_ARCH.QWEN2VL:          "qwen2vl",
     MODEL_ARCH.QWEN3:            "qwen3",
+    MODEL_ARCH.QWEN3_MHA2MLA:    "qwen3-mha2mla",
     MODEL_ARCH.QWEN3MOE:         "qwen3moe",
     MODEL_ARCH.PHI2:             "phi2",
     MODEL_ARCH.PHI3:             "phi3",
@@ -675,6 +681,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.ATTN_UP_V:                 "blk.{bid}.attn_up_v",
     MODEL_TENSOR.ATTN_ROPE_Q_IDX:           "blk.{bid}.attn_rope_q_idx",
     MODEL_TENSOR.ATTN_ROPE_K_IDX:           "blk.{bid}.attn_rope_k_idx",
+    MODEL_TENSOR.ATTN_K_R_NORM:             "blk.{bid}.attn_k_r_norm",
+    MODEL_TENSOR.ATTN_K_C_NORM:             "blk.{bid}.attn_k_c_norm",
     MODEL_TENSOR.FFN_GATE_INP:              "blk.{bid}.ffn_gate_inp",
     MODEL_TENSOR.FFN_GATE_INP_SHEXP:        "blk.{bid}.ffn_gate_inp_shexp",
     MODEL_TENSOR.FFN_NORM:                  "blk.{bid}.ffn_norm",
@@ -933,6 +941,30 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.FFN_UP_EXP,
     ],
     MODEL_ARCH.LLAMA_MHA2MLA: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT_NORM,
+        MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.ROPE_FREQS,
+        MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_K_R,
+        MODEL_TENSOR.ATTN_DOWN_KV,
+        MODEL_TENSOR.ATTN_UP_K,
+        MODEL_TENSOR.ATTN_UP_V,
+        MODEL_TENSOR.ATTN_ROPE_Q_IDX,
+        MODEL_TENSOR.ATTN_ROPE_K_IDX,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.ATTN_ROT_EMBD,
+        MODEL_TENSOR.FFN_GATE_INP,
+        MODEL_TENSOR.FFN_NORM,
+        MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+        MODEL_TENSOR.FFN_GATE_EXP,
+        MODEL_TENSOR.FFN_DOWN_EXP,
+        MODEL_TENSOR.FFN_UP_EXP,
+    ],
+    MODEL_ARCH.LLAMA_MHA2MLA_ABSORB: [
         MODEL_TENSOR.TOKEN_EMBD,
         MODEL_TENSOR.OUTPUT_NORM,
         MODEL_TENSOR.OUTPUT,
@@ -1280,6 +1312,29 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.ATTN_K,
         MODEL_TENSOR.ATTN_K_NORM,
         MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.FFN_NORM,
+        MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+    ],
+    MODEL_ARCH.QWEN3_MHA2MLA: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT_NORM,
+        MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.ROPE_FREQS,
+        MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_Q_NORM,
+        MODEL_TENSOR.ATTN_K_NORM,
+        MODEL_TENSOR.ATTN_K_R,
+        MODEL_TENSOR.ATTN_DOWN_KV,
+        MODEL_TENSOR.ATTN_UP_K,
+        MODEL_TENSOR.ATTN_UP_V,
+        MODEL_TENSOR.ATTN_ROPE_Q_IDX,
+        MODEL_TENSOR.ATTN_ROPE_K_IDX,
+        # MODEL_TENSOR.ATTN_K_R_NORM,
+        # MODEL_TENSOR.ATTN_K_C_NORM,
         MODEL_TENSOR.ATTN_OUT,
         MODEL_TENSOR.FFN_NORM,
         MODEL_TENSOR.FFN_GATE,

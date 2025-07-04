@@ -2019,12 +2019,44 @@ class LlamaModel(TextModel):
             if len(experts) > 0:
                 raise ValueError(f"Unprocessed experts: {experts}")
 
+
 @ModelBase.register("LlamaMHA2MLAForCausalLM")
 class LlamaMHA2MLAModel(LlamaModel):
     """
     LlamaMha2MLA is a llama model that uses the MHA2MLA to migrate to the MLA.
     """
     model_arch = gguf.MODEL_ARCH.LLAMA_MHA2MLA
+    undo_permute = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def set_gguf_parameters(self):  
+        super().set_gguf_parameters()
+        model_config = json.load(open(self.dir_model / "config.json", "r", encoding="utf-8"))
+        self.gguf_writer.add_mha2mla_rope_dim_for_mla(model_config["mha2mla"]["rope_dim_for_mla"])
+        self.gguf_writer.add_mha2mla_low_rank(model_config["mha2mla"]["low_rank"])
+
+
+    def generate_extra_tensors(self) -> Iterable[tuple[str, Tensor]]:
+        yield from super().generate_extra_tensors()
+        model_config = json.load(open(self.dir_model / "config.json", "r", encoding="utf-8"))
+        model_config["mha2mla"] = SimpleNamespace(**model_config["mha2mla"])
+        model_config = SimpleNamespace(**model_config)        
+        q_masks, k_masks = partial_rope_mask(model_config, model_config.mha2mla)
+        for layer_idx in range(self.block_count):
+            attn_rope_q_idx = reorder_matrix_rows(q_masks[layer_idx], is_cat=False)[0]
+            attn_rope_k_idx = reorder_matrix_rows(k_masks[layer_idx], is_cat=False)[0]
+            yield (self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_ROPE_Q_IDX, bid=layer_idx), torch.tensor(attn_rope_q_idx, dtype=torch.int32))
+            yield (self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_ROPE_K_IDX, bid=layer_idx), torch.tensor(attn_rope_k_idx, dtype=torch.int32))
+
+
+@ModelBase.register("LlamaMHA2MLAAbsorbForCausalLM")
+class LlamaMHA2MLAAbsorbModel(LlamaModel):
+    """
+    LlamaMha2MLA is a llama model that uses the MHA2MLA to migrate to the MLA.
+    """
+    model_arch = gguf.MODEL_ARCH.LLAMA_MHA2MLA_ABSORB
     undo_permute = False
 
     def __init__(self, *args, **kwargs):
@@ -3104,6 +3136,57 @@ class Qwen2MoeModel(TextModel):
 class Qwen3Model(Qwen2Model):
     model_arch = gguf.MODEL_ARCH.QWEN3
 
+
+@ModelBase.register("Qwen3MHA2MLAForCausalLM")
+class Qwen3MHA2MLAModel(Qwen3Model):
+    """
+    Qwen3Mha2MLA is a Qwen model that uses the MHA2MLA to migrate to the MLA.
+    """
+    model_arch = gguf.MODEL_ARCH.QWEN3_MHA2MLA
+    undo_permute = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def set_gguf_parameters(self):  
+        super().set_gguf_parameters()
+        model_config = json.load(open(self.dir_model / "config.json", "r", encoding="utf-8"))
+        self.gguf_writer.add_mha2mla_rope_dim_for_mla(model_config["mha2mla"]["rope_dim_for_mla"])
+        self.gguf_writer.add_mha2mla_low_rank(model_config["mha2mla"]["low_rank"])
+
+    def partial_rope_mask(self) -> tuple[list[Tensor], list[Tensor]]:
+        model_config = json.load(open(self.dir_model / "config.json", "r", encoding="utf-8"))
+        model_config["mha2mla"] = SimpleNamespace(**model_config["mha2mla"])
+        model_config = SimpleNamespace(**model_config)
+        q_masks, k_masks = partial_rope_mask(model_config, model_config.mha2mla)
+        return q_masks, k_masks
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        if name.endswith(".self_attn.k_norm.weight") or name.endswith(".self_attn.q_norm.weight"):
+            # Reorder the q and k norm weights
+            q_masks, k_masks = self.partial_rope_mask()
+            if name.endswith(".self_attn.q_norm.weight"):
+                n_head = self.find_hparam(["num_attention_heads", "n_head"])
+                mask = q_masks[bid]
+            else:
+                n_head = self.find_hparam(["num_key_value_heads", "n_head_kv"])
+                mask = k_masks[bid]
+            data_torch = data_torch.repeat([n_head])
+            data_torch_p1 = data_torch[mask].reshape(n_head, -1)
+            data_torch_p2 = data_torch[~mask].reshape(n_head, -1)
+            data_torch = torch.cat([data_torch_p1, data_torch_p2], dim=-1)
+            yield (self.map_tensor_name(name), data_torch)
+        else:
+            yield from super().modify_tensors(data_torch, name, bid)
+
+    def generate_extra_tensors(self) -> Iterable[tuple[str, Tensor]]:
+        yield from super().generate_extra_tensors()
+        q_masks, k_masks = self.partial_rope_mask()
+        for layer_idx in range(self.block_count):
+            attn_rope_q_idx = reorder_matrix_rows(q_masks[layer_idx], is_cat=False)[0]
+            attn_rope_k_idx = reorder_matrix_rows(k_masks[layer_idx], is_cat=False)[0]
+            yield (self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_ROPE_Q_IDX, bid=layer_idx), torch.tensor(attn_rope_q_idx, dtype=torch.int32))
+            yield (self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_ROPE_K_IDX, bid=layer_idx), torch.tensor(attn_rope_k_idx, dtype=torch.int32))
 
 @ModelBase.register("Qwen3MoeForCausalLM")
 class Qwen3MoeModel(Qwen2MoeModel):

@@ -276,6 +276,14 @@ class TensorNameMap:
             "model.layers.{bid}.self_attn.kv_proj.up_v",
         ),
 
+        MODEL_TENSOR.ATTN_K_R_NORM: (
+            "model.layers.{bid}.self_attn.k_r_norm",
+        ),
+
+        MODEL_TENSOR.ATTN_K_C_NORM: (
+            "model.layers.{bid}.self_attn.k_c_norm",
+        ),
+
         MODEL_TENSOR.ATTN_ROPE_Q_IDX: (),
         
         MODEL_TENSOR.ATTN_ROPE_K_IDX: (),
