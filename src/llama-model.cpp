@@ -1303,6 +1303,37 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, hparams.n_rel_attn_bkts);
                 type = LLM_TYPE_UNKNOWN;
             } break;
+        case LLM_ARCH_DOCFUSION:
+            {
+                if (!ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS, hparams.f_norm_eps, false)) {
+                    hparams.f_norm_eps = 1e-6f;
+                }
+
+                uint32_t dec_start_token_id;
+                if (ml.get_key(LLM_KV_DECODER_START_TOKEN_ID, dec_start_token_id, false)) {
+                    hparams.dec_start_token_id = dec_start_token_id;
+                }
+
+                switch (hparams.n_layer) {
+                    case 6:
+                        type = LLM_TYPE_335M;
+                        break;
+                    case 12:
+                        switch (hparams.n_ff()) {
+                            case 4096:
+                                type = LLM_TYPE_1B;
+                                break;
+                            case 3072:
+                                type = LLM_TYPE_410M;
+                                break;
+                            default:
+                                type = LLM_TYPE_UNKNOWN;
+                        }
+                        break;
+                    default:
+                        type = LLM_TYPE_UNKNOWN;
+                }
+            } break;
         case LLM_ARCH_JAIS:
             {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS, hparams.f_norm_eps);

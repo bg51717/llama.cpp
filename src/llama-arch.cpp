@@ -72,6 +72,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
     { LLM_ARCH_PLM,              "plm"              },
     { LLM_ARCH_BAILINGMOE,       "bailingmoe"       },
+    { LLM_ARCH_DOCFUSION,        "docfusion"        },
     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
 };
 
@@ -1554,6 +1555,38 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
             { LLM_TENSOR_FFN_GATE_SHEXP,     "blk.%d.ffn_gate_shexp" },
             { LLM_TENSOR_FFN_DOWN_SHEXP,     "blk.%d.ffn_down_shexp" },
             { LLM_TENSOR_FFN_UP_SHEXP,       "blk.%d.ffn_up_shexp" },
+        },
+    },
+    {
+        LLM_ARCH_DOCFUSION,
+        {
+            { LLM_TENSOR_TOKEN_EMBD,         "token_embd" },
+            { LLM_TENSOR_OUTPUT,             "output" },
+
+            { LLM_TENSOR_DEC_OUTPUT_NORM,    "dec.token_embd_norm" },
+            { LLM_TENSOR_DEC_ATTN_NORM,      "dec.blk.%d.attn_norm" },
+            { LLM_TENSOR_DEC_ATTN_Q,         "dec.blk.%d.attn_q" },
+            { LLM_TENSOR_DEC_ATTN_K,         "dec.blk.%d.attn_k" },
+            { LLM_TENSOR_DEC_ATTN_V,         "dec.blk.%d.attn_v" },
+            { LLM_TENSOR_DEC_ATTN_OUT,       "dec.blk.%d.attn_o" },
+            { LLM_TENSOR_DEC_CROSS_ATTN_NORM,"dec.blk.%d.cross_attn_norm" },
+            { LLM_TENSOR_DEC_CROSS_ATTN_Q,   "dec.blk.%d.cross_attn_q" },
+            { LLM_TENSOR_DEC_CROSS_ATTN_K,   "dec.blk.%d.cross_attn_k" },
+            { LLM_TENSOR_DEC_CROSS_ATTN_V,   "dec.blk.%d.cross_attn_v" },
+            { LLM_TENSOR_DEC_CROSS_ATTN_OUT, "dec.blk.%d.cross_attn_o" },
+            { LLM_TENSOR_DEC_FFN_NORM,       "dec.blk.%d.final_norm" },
+            { LLM_TENSOR_DEC_FFN_DOWN,       "dec.blk.%d.ffn_down" },
+            { LLM_TENSOR_DEC_FFN_UP,         "dec.blk.%d.ffn_up" },
+
+            { LLM_TENSOR_ENC_OUTPUT_NORM,    "enc.token_embd_norm" },
+            { LLM_TENSOR_ENC_ATTN_NORM,      "enc.blk.%d.attn_norm" },
+            { LLM_TENSOR_ENC_ATTN_Q,         "enc.blk.%d.attn_q" },
+            { LLM_TENSOR_ENC_ATTN_K,         "enc.blk.%d.attn_k" },
+            { LLM_TENSOR_ENC_ATTN_V,         "enc.blk.%d.attn_v" },
+            { LLM_TENSOR_ENC_ATTN_OUT,       "enc.blk.%d.attn_o" },
+            { LLM_TENSOR_ENC_FFN_NORM,       "enc.blk.%d.final_norm" },
+            { LLM_TENSOR_ENC_FFN_DOWN,       "enc.blk.%d.ffn_down" },
+            { LLM_TENSOR_ENC_FFN_UP,         "enc.blk.%d.ffn_up" },
         },
     },
     {
