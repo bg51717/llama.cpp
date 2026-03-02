@@ -924,6 +924,526 @@ struct clip_graph {
         return gf;
     }
 
+    ggml_cgraph * build_docfusion() {
+
+            GGML_ASSERT(model.patch_bias == nullptr);
+            GGML_ASSERT(model.class_embedding == nullptr);
+            auto &               dv           = hparams.davit_hparams;
+            const int            n_layers     = dv.dim_embed.size();
+            std::vector<int32_t> conv_stride  = dv.patch_stride;
+            std::vector<int32_t> conv_padding = dv.patch_padding;
+            std::vector<int32_t> num_heads    = dv.num_heads;
+            std::vector<int32_t> embed_dims   = dv.dim_embed;
+            std::vector<int32_t> num_groups   = dv.num_groups;
+            int                  T            = 1;
+            const float          eps          = 0.00001f;
+            const int            window_size  = dv.window_size;
+
+            auto build_layernorm = [&](ggml_tensor * inp, ggml_tensor * w, ggml_tensor * b) -> ggml_tensor * {
+                inp = ggml_norm(ctx0, inp, eps);
+                if (w) {
+                    inp = ggml_mul(ctx0, inp, w);
+                }
+                if (b) {
+                    inp = ggml_add(ctx0, inp, b);
+                }
+                return inp;
+            };
+
+            auto build_conv = [&](ggml_tensor * inp, std::vector<int> input_size,
+                                  int il) -> std::pair<ggml_tensor *, std::vector<int>> {
+                int H = input_size[0];
+                int W = input_size[1];
+                if (il != 0) {
+                    if (model.layers[il].convs_norm_w!=nullptr&&dv.patch_prenorm[il]) {
+                        inp = build_layernorm(inp, model.layers[il].convs_norm_w, model.layers[il].convs_norm_b);
+                    }
+                    inp = ggml_reshape_4d(ctx0, inp, inp->ne[0], W, H, inp->ne[2]);
+                    inp = ggml_permute(ctx0, inp, 2, 0, 1, 3);
+                }
+                ggml_type pre_dtype = inp->type;
+                inp        = ggml_conv_2d(ctx0, ggml_cast(ctx0, model.layers[il].convs_proj_w, GGML_TYPE_F32), ggml_cast(ctx0, inp, GGML_TYPE_F32), conv_stride[il], conv_stride[il], conv_padding[il], conv_padding[il], 1, 1);
+                inp = ggml_cont(ctx0, inp);
+                inp = ggml_add(ctx0, inp, ggml_cont(ctx0, ggml_permute(ctx0,  model.layers[il].convs_proj_b, 2, 1, 0, 3)));
+                inp = ggml_cast(ctx0, inp, pre_dtype);
+                W          = inp->ne[0];
+                H          = inp->ne[1];
+                inp        = ggml_permute(ctx0, ggml_cont(ctx0, inp), 1, 2, 0, 3);
+                inp        = ggml_reshape_3d(ctx0, ggml_cont(ctx0, inp), inp->ne[0], W * H,
+                                             inp->ne[3]);
+                if(model.layers[il].convs_norm_w!=nullptr&&!dv.patch_prenorm[il]) {
+                    inp = build_layernorm(inp, model.layers[il].convs_norm_w, model.layers[il].convs_norm_b);
+                }
+                input_size = { H, W };
+                return { inp, input_size };
+            };
+
+            auto build_depth_conv = [&](ggml_tensor * inp, std::vector<int> input_size, int il, ggml_tensor * weight, ggml_tensor * bias, int local_kernel_size, int local_padding, int local_stride) -> std::pair<ggml_tensor *, std::vector<int>> {
+                int C = inp->ne[0];
+                int N = inp->ne[1];
+                int B = inp->ne[2];
+                int H = input_size[0];
+                int W = input_size[1];
+                GGML_ASSERT(N == H * W);
+
+                inp = ggml_permute(ctx0, inp, 1, 0, 2, 3);
+                inp = ggml_reshape_4d(ctx0, ggml_cont(ctx0, inp), W, H, C, B);
+                weight = ggml_cont(ctx0, ggml_cast(ctx0, weight, GGML_TYPE_F32));
+                inp = ggml_conv_2d_dw_direct(ctx0, weight, inp, local_stride, local_stride, local_padding, local_padding, 1, 1);
+                inp = ggml_cont(ctx0, inp);
+                inp = ggml_add(ctx0, inp, ggml_cont(ctx0, ggml_permute(ctx0, bias, 2, 1, 0, 3)));
+                H = inp->ne[1];
+                W = inp->ne[0];
+                inp = ggml_reshape_3d(ctx0, inp, H * W, inp->ne[2], inp->ne[3]);
+                inp = ggml_permute(ctx0, inp, 1, 0, 2, 3);
+                inp = ggml_cont(ctx0, inp);
+                return {
+                    inp, { H, W }
+                };
+            };
+            auto build_mlp = [&](ggml_tensor * inp, std::vector<int> input_size, int il, ggml_tensor * w0, ggml_tensor * b0,
+                                 ggml_tensor * w1, ggml_tensor * b1) -> std::pair<ggml_tensor *, std::vector<int>> {
+                inp = ggml_mul_mat(ctx0, w0, inp);
+                inp = ggml_add(ctx0, inp, b0);
+
+                inp = ggml_gelu_erf(ctx0, inp);
+                inp = ggml_mul_mat(ctx0, w1, inp);
+                inp = ggml_add(ctx0, inp, b1);
+                return { inp, input_size };
+            };
+            auto window_partition = [&](struct ggml_tensor * x, const int ws) -> ggml_tensor * {
+
+                size_t W = x->ne[1];
+                size_t H = x->ne[2];
+                size_t C = x->ne[0];
+                size_t B = x->ne[3];
+
+                GGML_ASSERT(W % ws == 0 && H % ws == 0);
+                const int64_t Wg   = W / ws;
+                const int64_t Hg   = H / ws;
+                const int64_t Nwin = B * Wg * Hg;
+                ggml_tensor * t1   = ggml_reshape_4d(ctx0, x, C * ws, Wg, ws, Hg * B);
+                ggml_tensor * t2   = ggml_permute(ctx0, t1, 0, 2, 1, 3);
+                t2                 = ggml_cont(ctx0, t2);
+                ggml_tensor * t3   = ggml_reshape_4d(ctx0, t2, C, ws, ws, Nwin);
+
+                ggml_tensor * out = ggml_cont(ctx0, t3);
+                return out;
+            };
+            auto window_reverse = [&](struct ggml_tensor * windows, const int B, const int H, const int W,
+                                      const int ws) -> ggml_tensor * {
+
+                const int64_t Nw  = windows->ne[3];
+                const int64_t ws2 = windows->ne[2];
+                const int64_t ws1 = windows->ne[1];
+                const int64_t C   = windows->ne[0];
+
+                GGML_ASSERT(ws1 == ws && ws2 == ws);
+                GGML_ASSERT(H % ws == 0 && W % ws == 0);
+
+                const int64_t Hg = H / ws;
+                const int64_t Wg = W / ws;
+
+                const int64_t Nwin = B * Wg * Hg;
+                GGML_ASSERT(Nw == Nwin);
+
+                ggml_tensor * t1 = ggml_reshape_4d(ctx0, windows, C * ws, ws, Wg, Hg * B);
+                ggml_tensor * t2 = ggml_permute(ctx0, t1, 0, 2, 1, 3);
+                t2               = ggml_cont(ctx0, t2);
+                ggml_tensor * t3 = ggml_reshape_4d(ctx0, t2, C, W, H, B);
+                ggml_tensor * x  = ggml_cont(ctx0, t3);
+
+                return x;
+            };
+            auto build_window_attention = [&](ggml_tensor *    x,
+                                              std::vector<int> input_size,
+                                              int              ws,
+                                              int n_heads, float scale, int il,
+                                              int idep) -> std::pair<ggml_tensor *, std::vector<int>> {
+                auto & layer = model.layers[il];
+
+                const int H     = input_size[0];
+                const int W     = input_size[1];
+
+                const int C     = x->ne[0];
+                const int B     = x->ne[2];
+                GGML_ASSERT(x->ne[1] == H * W);
+                const int L = H * W;
+                GGML_ASSERT(L == (x->ne[1]));
+
+                x = ggml_reshape_4d(ctx0, x, C, W, H, B);
+
+                const int pad_l = 0, pad_t = 0;
+                const int pad_r = (ws - (W % ws)) % ws;
+                const int pad_b = (ws - (H % ws)) % ws;
+
+                x = ggml_pad(ctx0, x, 0, pad_r, pad_b, 0);
+
+                int64_t Hp                    = x->ne[2];
+                int64_t Wp                    = x->ne[1];
+                x                             = window_partition(x, ws);
+                const int N                   = ws * ws;
+                const int B_                  = x->ne[3];
+                x                             = ggml_reshape_3d(ctx0, x, C, ws * ws, B_);
+
+                const int            head_dim = C / n_heads;
+
+                struct ggml_tensor * q_x      = ggml_mul_mat(ctx0, layer.spatial_block_attn_fn_q_w[idep], x);
+                q_x                           = ggml_add(ctx0, q_x, layer.spatial_block_attn_fn_q_b[idep]);
+
+                struct ggml_tensor * k_x = ggml_mul_mat(ctx0, layer.spatial_block_attn_fn_k_w[idep], x);
+                k_x                      = ggml_add(ctx0, k_x, layer.spatial_block_attn_fn_k_b[idep]);
+
+                struct ggml_tensor * v_x = ggml_mul_mat(ctx0, layer.spatial_block_attn_fn_v_w[idep], x);
+                v_x                      = ggml_add(ctx0, v_x, layer.spatial_block_attn_fn_v_b[idep]);
+
+                q_x = ggml_reshape_4d(ctx0, q_x, head_dim, n_heads, N, B_);
+                k_x = ggml_reshape_4d(ctx0, k_x, head_dim, n_heads, N, B_);
+                v_x = ggml_reshape_4d(ctx0, v_x, head_dim, n_heads, N, B_);
+
+                q_x                = ggml_permute(ctx0, q_x, 0, 2, 1, 3);
+                k_x                = ggml_permute(ctx0, k_x, 0, 2, 1, 3);
+                v_x                = ggml_permute(ctx0, v_x, 1, 2, 0, 3);
+                v_x = ggml_cont(ctx0, v_x);
+                q_x                = ggml_cont(ctx0, q_x);
+                k_x                = ggml_cont(ctx0, k_x);
+                v_x                = ggml_cont(ctx0, v_x);
+                q_x                = ggml_scale(ctx0, q_x, scale);
+                ggml_tensor * attn = ggml_mul_mat(
+                    ctx0, k_x,
+                    q_x);
+                attn                 = ggml_soft_max(ctx0, attn);
+                ggml_tensor * attn_v = ggml_mul_mat(ctx0, v_x, attn);
+                x                    = ggml_permute(ctx0, attn_v, 0, 2, 1, 3);
+                x = ggml_cont(ctx0, x);
+                x                    = ggml_reshape_3d(ctx0, x, C, N, B_);
+                x                    = ggml_add(ctx0, ggml_mul_mat(ctx0, layer.spatial_block_attn_fn_proj_w[idep], x),
+                                                layer.spatial_block_attn_fn_proj_b[idep]);
+                x                    = ggml_reshape_4d(ctx0, x, C, ws, ws, B_);
+                x                    = window_reverse(x, B, Hp, Wp, ws);
+                if (pad_r > 0 || pad_b > 0) {
+                    x = ggml_view_4d(ctx0, x, C, W, H, B, x->nb[1], x->nb[2], x->nb[3], 0);
+
+                    x = ggml_cont(ctx0, x);
+                }
+                x = ggml_reshape_3d(ctx0, x, C, W * H, B);
+                return { x, input_size };
+            };
+
+            auto build_spatial_block = [&](ggml_tensor * inp, std::vector<int> input_size, int il, int idep) -> std::pair<ggml_tensor *, std::vector<int>> {
+
+                ggml_tensor * res = nullptr;
+                if (model.layers[il].spatial_block_conv1_fn_dw_w[idep] != nullptr){
+                    res = inp;
+                    std::tie(inp, input_size) = build_depth_conv(inp, input_size, il, model.layers[il].spatial_block_conv1_fn_dw_w[idep], model.layers[il].spatial_block_conv1_fn_dw_b[idep], 3, 1, 1);
+                    inp = ggml_cont(ctx0, inp);
+                    res = ggml_cont(ctx0, res);
+                    inp = ggml_add(ctx0, inp, res);
+                }
+
+                const int head_dim = embed_dims[il] / num_heads[il];
+                const float scale = 1.0f / std::sqrt(float(head_dim));
+                res = inp;
+                inp = build_layernorm(inp, model.layers[il].spatial_block_attn_norm_w[idep], model.layers[il].spatial_block_attn_norm_b[idep]);
+                std::tie(inp, input_size) = build_window_attention(inp, input_size, window_size, num_heads[il], scale, il, idep);
+                inp = ggml_cont(ctx0, inp);
+                res = ggml_cont(ctx0, res);
+                inp = ggml_add(ctx0, inp, res);
+
+                if (model.layers[il].spatial_block_conv2_fn_dw_w[idep] != nullptr){
+                    res = inp;
+                    std::tie(inp, input_size) = build_depth_conv(inp, input_size, il, model.layers[il].spatial_block_conv2_fn_dw_w[idep], model.layers[il].spatial_block_conv2_fn_dw_b[idep], 3, 1, 1);
+                    inp = ggml_cont(ctx0, inp);
+                    res = ggml_cont(ctx0, res);
+                    inp = ggml_add(ctx0, inp, res);
+                }
+
+                res = inp;
+                inp = build_layernorm(inp, model.layers[il].spatial_block_ffn_norm_w[idep], model.layers[il].spatial_block_ffn_norm_b[idep]);
+                std::tie(inp, input_size) = build_mlp(inp, input_size, il, model.layers[il].spatial_block_ffn_fn_net_fc1_w[idep],
+                                                     model.layers[il].spatial_block_ffn_fn_net_fc1_b[idep],
+                                                     model.layers[il].spatial_block_ffn_fn_net_fc2_w[idep],
+                                                     model.layers[il].spatial_block_ffn_fn_net_fc2_b[idep]);
+                inp = ggml_cont(ctx0, inp);
+                res = ggml_cont(ctx0, res);
+                inp = ggml_add(ctx0, inp, res);
+                return { inp, input_size };
+            };
+
+            auto build_channel_attn = [&](ggml_tensor * inp, std::vector<int> input_size, int n_groups, int dim, int il,
+                                          int idep) -> std::pair<ggml_tensor *, std::vector<int>> {
+                int           B         = inp->ne[2];
+                int           N         = inp->ne[1];
+                int           C         = inp->ne[0];
+                float         scale     = 1.0f / std::sqrt(float(N));
+                int           group_dim = C / n_groups;
+
+                ggml_tensor * q_x       = ggml_mul_mat(ctx0, model.layers[il].channel_block_attn_fn_q_w[idep], inp);
+                if(model.layers[il].channel_block_attn_fn_q_b[idep] != nullptr)
+                    q_x = ggml_add(ctx0, q_x, model.layers[il].channel_block_attn_fn_q_b[idep]);
+                ggml_tensor * k_x       = ggml_mul_mat(ctx0, model.layers[il].channel_block_attn_fn_k_w[idep], inp);
+                if(model.layers[il].channel_block_attn_fn_k_b[idep] != nullptr)
+                    k_x = ggml_add(ctx0, k_x, model.layers[il].channel_block_attn_fn_k_b[idep]);
+                ggml_tensor * v_x       = ggml_mul_mat(ctx0, model.layers[il].channel_block_attn_fn_v_w[idep], inp);
+                if(model.layers[il].channel_block_attn_fn_v_b[idep] != nullptr)
+                    v_x = ggml_add(ctx0, v_x, model.layers[il].channel_block_attn_fn_v_b[idep]);
+
+                q_x = ggml_reshape_4d(ctx0, q_x, group_dim, n_groups, N, B);
+                k_x = ggml_reshape_4d(ctx0, k_x, group_dim, n_groups, N, B);
+                v_x = ggml_reshape_4d(ctx0, v_x, group_dim, n_groups, N, B);
+
+                q_x                     = ggml_permute(ctx0, q_x, 0, 2, 1, 3);
+                k_x                     = ggml_permute(ctx0, k_x, 0, 2, 1, 3);
+                v_x                     = ggml_permute(ctx0, v_x, 0, 2, 1, 3);
+
+                q_x                     = ggml_cont(ctx0, q_x);
+                k_x                     = ggml_cont(ctx0, k_x);
+                v_x                     = ggml_cont(ctx0, v_x);
+
+                q_x                     = ggml_scale(ctx0, q_x, scale);
+
+                ggml_tensor * q_t       = ggml_permute(ctx0, q_x, 1, 0, 2, 3);
+                ggml_tensor * k_t       = ggml_permute(ctx0, k_x, 1, 0, 2, 3);
+
+                q_t                     = ggml_cont(ctx0, q_t);
+                k_t                     = ggml_cont(ctx0, k_t);
+
+                ggml_tensor * attn      = ggml_mul_mat(ctx0, k_t, q_t);
+
+                attn                    = ggml_soft_max(ctx0, attn);
+
+                ggml_tensor * attn_v    = ggml_mul_mat(ctx0, v_x, attn);
+                attn_v                  = ggml_permute(ctx0, attn_v, 2, 0, 1, 3);
+                attn_v                  = ggml_cont(ctx0, attn_v);
+                GGML_ASSERT(attn_v->ne[0] * attn_v->ne[1] == C);
+                GGML_ASSERT(attn_v->ne[2] == N);
+                inp = ggml_reshape_3d(ctx0, attn_v, C, N, B);
+                inp = ggml_add(ctx0, ggml_mul_mat(ctx0, model.layers[il].channel_block_attn_fn_proj_w[idep], inp),
+                               model.layers[il].channel_block_attn_fn_proj_b[idep]);
+                return { inp, input_size };
+            };
+
+            auto build_channel_block = [&](ggml_tensor * inp, std::vector<int> input_size, int il, int idep, int dim,
+                                           int n_group, float scale) -> std::pair<ggml_tensor *, std::vector<int>> {
+
+                ggml_tensor * res = nullptr;
+                if(model.layers[il].channel_block_conv1_fn_dw_w[idep] != nullptr){
+                    res = inp;
+                    std::tie(inp, input_size) = build_depth_conv(inp, input_size, il, model.layers[il].channel_block_conv1_fn_dw_w[idep], model.layers[il].channel_block_conv1_fn_dw_b[idep], 3, 1, 1);
+                    inp = ggml_cont(ctx0, inp);
+                    res = ggml_cont(ctx0, res);
+                    inp = ggml_add(ctx0, inp, res);
+                }
+
+                res = inp;
+                inp = build_layernorm(inp, model.layers[il].channel_block_attn_norm_w[idep], model.layers[il].channel_block_attn_norm_b[idep]);
+                std::tie(inp, input_size) = build_channel_attn(inp, input_size, n_group, dim, il, idep);
+                inp = ggml_cont(ctx0, inp);
+                res = ggml_cont(ctx0, res);
+                inp = ggml_add(ctx0, inp, res);
+
+                if(model.layers[il].channel_block_conv2_fn_dw_w[idep] != nullptr){
+                    res = inp;
+                    std::tie(inp, input_size) = build_depth_conv(inp, input_size, il, model.layers[il].channel_block_conv2_fn_dw_w[idep], model.layers[il].channel_block_conv2_fn_dw_b[idep], 3, 1, 1);
+                    inp = ggml_cont(ctx0, inp);
+                    res = ggml_cont(ctx0, res);
+                    inp = ggml_add(ctx0, inp, res);
+                }
+
+                res = inp;
+                inp = build_layernorm(inp, model.layers[il].channel_block_ffn_norm_w[idep], model.layers[il].channel_block_ffn_norm_b[idep]);
+                inp = ggml_cont(ctx0, inp);
+
+                inp = ggml_mul_mat(ctx0, model.layers[il].channel_block_ffn_fn_net_fc1_w[idep], inp);
+                inp = ggml_add(ctx0, inp, model.layers[il].channel_block_ffn_fn_net_fc1_b[idep]);
+
+                inp = ggml_gelu_erf(ctx0, inp);
+
+                inp = ggml_mul_mat(ctx0, model.layers[il].channel_block_ffn_fn_net_fc2_w[idep], inp);
+                inp = ggml_add(ctx0, inp, model.layers[il].channel_block_ffn_fn_net_fc2_b[idep]);
+
+                inp = ggml_cont(ctx0, inp);
+                res = ggml_cont(ctx0, res);
+                inp = ggml_add(ctx0, inp, res);
+                return { inp, input_size };
+            };
+
+            auto build_davit_block = [&](ggml_tensor * inp, std::vector<int> input_size, int il,
+                                         int idep) -> std::pair<ggml_tensor *, std::vector<int>> {
+                const int   dim           = embed_dims[il];
+                const int   num_heads     = dv.num_heads[il];
+                const int   head_dim      = dim / num_heads;
+                const float scale         = 1.0f / std::sqrt(float(head_dim));
+                std::tie(inp, input_size) = build_spatial_block(inp, input_size, il, idep);
+                std::tie(inp, input_size) = build_channel_block(inp, input_size, il, idep, dim, num_groups[il], scale);
+                inp = ggml_cont(ctx0, inp);
+                return { inp, input_size };
+            };
+
+            auto build_LearnedAbsolutePositionEmbedding2D = [&](ggml_tensor * inp, int embed_dim,
+                                                                int num_pos) -> ggml_tensor * {
+                int           batch_size = inp->ne[3];
+                int           height = inp->ne[2], width = inp->ne[1];
+
+                ggml_tensor * row_embed = model.pos_r;
+                ggml_tensor * col_embed = model.pos_c;
+
+                row_embed = ggml_cont(ctx0, row_embed);
+                row_embed = ggml_view_2d(ctx0, row_embed, row_embed->ne[0], height, row_embed->nb[1], 0);
+                row_embed = ggml_cont(ctx0, row_embed);
+                col_embed = ggml_cont(ctx0, col_embed);
+                col_embed = ggml_view_2d(ctx0, col_embed, col_embed->ne[0], width, col_embed->nb[1], 0);
+                col_embed = ggml_cont(ctx0, col_embed);
+
+                row_embed = ggml_cont(ctx0, ggml_reshape_3d(ctx0, row_embed, row_embed->ne[0], 1, row_embed->ne[1]));
+
+                ggml_tensor * row_repeat = ggml_new_tensor_3d(ctx0, row_embed->type, row_embed->ne[0], width, height);
+                row_repeat = ggml_repeat(ctx0, row_embed, row_repeat);
+                ggml_tensor * col_repeat = ggml_new_tensor_3d(ctx0, col_embed->type, col_embed->ne[0], width, height);
+                col_repeat = ggml_repeat(ctx0, col_embed, col_repeat);
+                ggml_tensor * pos_emb    = ggml_concat(ctx0, col_repeat, row_repeat, 0);
+                pos_emb = ggml_cont(ctx0, pos_emb);
+                pos_emb = ggml_cont(ctx0, ggml_permute(ctx0, pos_emb, 2, 0, 1, 3));
+
+                ggml_tensor * pos_4d =
+                    ggml_new_tensor_4d(ctx0, pos_emb->type, pos_emb->ne[0], pos_emb->ne[1], pos_emb->ne[2], batch_size);
+                pos_4d = ggml_repeat(ctx0, pos_emb, pos_4d);
+                pos_4d = ggml_permute(ctx0, pos_4d, 1, 2, 0, 3);
+                pos_4d = ggml_cont(ctx0, pos_4d);
+
+                return pos_4d;
+            };
+
+            auto build_pos_idx_to_embed_cosine1d = [&](ggml_tensor * x) -> ggml_tensor * {
+
+                int len_seq = x->ne[1];
+                int max_seq_len = dv.temporal_embedding.max_embeddings;
+                GGML_ASSERT(len_seq <= max_seq_len);
+                ggml_tensor * pos_embed = model.temporal_embed_pos_to_embed;
+
+                pos_embed = ggml_view_2d(ctx0, pos_embed, pos_embed->ne[0], len_seq, pos_embed->nb[1], 0);
+                pos_embed = ggml_reshape_3d(ctx0, pos_embed, pos_embed->ne[0], pos_embed->ne[1], 1);
+                return pos_embed;
+            };
+
+            norm_type        norm_t     = NORM_TYPE_NORMAL;
+
+            ggml_tensor *    inp_raw    = build_inp_raw();
+            inp_raw = ggml_cast(ctx0, inp_raw, GGML_TYPE_F32);
+            ggml_tensor *    inpL       = inp_raw;
+            std::vector<int> input_size = { (int) inp_raw->ne[1], (int) inp_raw->ne[0] };
+            int32_t          batch_size      = (int32_t) inp_raw->ne[3];
+
+            for (int il = 0; il < n_layers; il++) {
+                const int     dep          = dv.depths[il];
+                std::tie(inpL, input_size) = build_conv(inpL, input_size, il);
+                for (int idep = 0; idep < dep; idep++) {
+                    std::tie(inpL, input_size) = build_davit_block(inpL, input_size, il, idep);
+                }
+                inpL = ggml_cont(ctx0, inpL);
+            }
+     
+
+            if(model.pos_r != nullptr){
+                int ne0           = inpL->ne[0];
+                int total_element = ggml_nelements(inpL);
+                int spatial_size  = total_element / (batch_size * ne0 * T);
+                inpL              = ggml_reshape_3d(ctx0, inpL, ne0, spatial_size, batch_size * T);
+                int num_tokens    = (int) (inpL->ne[1]);
+                int h = int(std::sqrt(num_tokens)), w = h;
+                GGML_ASSERT(h * w == num_tokens);
+                inpL = ggml_reshape_4d(ctx0, inpL, inpL->ne[0], w, h, batch_size * T);
+                ggml_tensor * pos_embd =
+                build_LearnedAbsolutePositionEmbedding2D(inpL, dv.dim_embed.back(), dv.image_pos_embed.max_embeddings);
+                inpL = ggml_add(ctx0, inpL, pos_embd);
+                inpL = ggml_reshape_3d(ctx0, inpL, inpL->ne[0], w * h * T, batch_size);
+                inpL = ggml_cont(ctx0, inpL);
+            }
+            
+
+            if(model.temporal_embed_pos_to_embed != nullptr){
+                int total_element = ggml_nelements(inpL);
+                int spatial_size = total_element / (batch_size * T * inpL->ne[0]);
+                ggml_tensor * tmp = ggml_reshape_4d(ctx0, inpL, inpL->ne[0], spatial_size, T, batch_size);
+                tmp = ggml_view_3d(  
+                    ctx0,  
+                    tmp,  
+                    tmp->ne[0],
+                    T,
+                    batch_size,
+                    tmp->nb[2],
+                    tmp->nb[3],
+                    0
+                );
+                ggml_tensor * pos_embed = build_pos_idx_to_embed_cosine1d(tmp);
+                inpL = ggml_reshape_4d(ctx0, inpL, inpL->ne[0], spatial_size, T, batch_size);
+                ggml_tensor * pos_embed_repeat = ggml_new_tensor_4d(ctx0, pos_embed->type, pos_embed->ne[0], spatial_size, T, batch_size);
+                pos_embed_repeat = ggml_repeat(ctx0, pos_embed, pos_embed_repeat);
+                inpL = ggml_add(ctx0, inpL, pos_embed_repeat);
+                inpL = ggml_cont(ctx0, inpL);
+            }
+
+            std::map<std::string, ggml_tensor *> x_feat_dict;
+            int64_t last_dim = inpL->ne[0];  
+            int64_t total_elements = ggml_nelements(inpL);  
+            int64_t spatial_dim = total_elements / (batch_size * T * last_dim);
+
+            ggml_tensor * reshaped_spatial = ggml_reshape_4d(ctx0, inpL, last_dim, spatial_dim, T, batch_size);
+            reshaped_spatial = ggml_cont(ctx0, ggml_permute(ctx0, reshaped_spatial, 1, 0, 2, 3));
+            ggml_tensor * spatial_avg_pool_x = ggml_mean(ctx0, reshaped_spatial);
+            spatial_avg_pool_x = ggml_permute(ctx0, spatial_avg_pool_x, 1, 0, 2, 3);
+            x_feat_dict["spatial_avg_pool"] = spatial_avg_pool_x;
+
+            ggml_tensor * reshaped_temporal = ggml_reshape_4d(ctx0, inpL, last_dim, spatial_dim, T, batch_size);
+            reshaped_temporal = ggml_cont(ctx0, ggml_permute(ctx0, reshaped_temporal, 2, 1, 0, 3));
+            ggml_tensor * temporal_avg_pool_x = ggml_mean(ctx0, reshaped_temporal);
+            temporal_avg_pool_x = ggml_permute(ctx0, temporal_avg_pool_x, 2, 1, 0, 3);
+            x_feat_dict["temporal_avg_pool"] = temporal_avg_pool_x;
+            
+            ggml_tensor * reshaped_last = ggml_reshape_4d(ctx0, inpL, last_dim, spatial_dim, T, batch_size);
+            size_t offset_last = (T - 1) * reshaped_last->nb[2];  
+            ggml_tensor * last_frame = ggml_view_3d(ctx0, reshaped_last, last_dim, spatial_dim, batch_size,   
+                                                    reshaped_last->nb[1], reshaped_last->nb[3], offset_last);  
+            x_feat_dict["last_frame"] = last_frame;
+
+            std::string now_feat_str;
+            std::vector<std::string> feat_list;
+            std::vector<ggml_tensor *> new_x;
+            for (int i = 0; i < (int) dv.image_feature_source.length(); i++) {
+                if(dv.image_feature_source[i] != ','){
+                    now_feat_str += dv.image_feature_source[i];
+                }else{
+                    if(now_feat_str.length() > 0){
+                        feat_list.push_back(now_feat_str);
+                        now_feat_str = "";
+                    }
+                }
+            }
+            if(now_feat_str.length() > 0){
+                feat_list.push_back(now_feat_str);
+            }
+            for (const auto & feat_name : feat_list) {
+                GGML_ASSERT(x_feat_dict.find(feat_name) != x_feat_dict.end());
+                new_x.push_back(x_feat_dict[feat_name]);
+            }
+            if (new_x.empty()) {
+                new_x.push_back(x_feat_dict["spatial_avg_pool"]);
+            }
+
+            inpL = new_x[0];  
+            for(int i = 1; i < new_x.size(); i++) {  
+                ggml_tensor * current = new_x[i];
+                inpL = ggml_concat(ctx0, inpL, current, 1);  
+            }
+
+            inpL = ggml_mul_mat(ctx0, model.image_proj, inpL);
+            inpL = build_norm(inpL, model.image_proj_norm_w, model.image_proj_norm_b, norm_t, eps, -1);
+
+            inpL = ggml_cont(ctx0, inpL);
+            ggml_build_forward_expand(gf, inpL);
+            return gf;
+        }
+
     ggml_cgraph * build_minicpmv() {
         const int batch_size = 1;
 
@@ -2084,6 +2604,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
         case PROJECTOR_TYPE_QWEN25VL:
             {
                 res = graph.build_qwen2vl();
+            } break;
+        case PROJECTOR_TYPE_DOCFUSION:
+            {
+                res = graph.build_docfusion();
             } break;
         case PROJECTOR_TYPE_MINICPMV:
             {
