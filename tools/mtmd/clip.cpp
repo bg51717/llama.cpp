@@ -2562,46 +2562,48 @@ struct clip_model_loader {
         model.position_embeddings = get_tensor(string_format(TN_POS_EMBD, prefix), false);
 
         // layers
-        model.layers.resize(hparams.n_layer);
-        for (int il = 0; il < hparams.n_layer; ++il) {
-            auto & layer = model.layers[il];
-            layer.k_w    = get_tensor(string_format(TN_ATTN_K,      prefix, il, "weight"));
-            layer.q_w    = get_tensor(string_format(TN_ATTN_Q,      prefix, il, "weight"));
-            layer.v_w    = get_tensor(string_format(TN_ATTN_V,      prefix, il, "weight"));
-            layer.o_w    = get_tensor(string_format(TN_ATTN_OUTPUT, prefix, il, "weight"));
-            layer.k_norm = get_tensor(string_format(TN_ATTN_K_NORM, prefix, il, "weight"), false);
-            layer.q_norm = get_tensor(string_format(TN_ATTN_Q_NORM, prefix, il, "weight"), false);
-            layer.ln_1_w = get_tensor(string_format(TN_LN_1,        prefix, il, "weight"), false);
-            layer.ln_2_w = get_tensor(string_format(TN_LN_2,        prefix, il, "weight"), false);
-            layer.ls_1_w = get_tensor(string_format(TN_LS_1,        prefix, il, "weight"), false); // no bias
-            layer.ls_2_w = get_tensor(string_format(TN_LS_2,        prefix, il, "weight"), false); // no bias
+        if (model.proj_type != PROJECTOR_TYPE_DOCFUSION) {
+            model.layers.resize(hparams.n_layer);
+            for (int il = 0; il < hparams.n_layer; ++il) {
+                auto & layer = model.layers[il];
+                layer.k_w    = get_tensor(string_format(TN_ATTN_K,      prefix, il, "weight"));
+                layer.q_w    = get_tensor(string_format(TN_ATTN_Q,      prefix, il, "weight"));
+                layer.v_w    = get_tensor(string_format(TN_ATTN_V,      prefix, il, "weight"));
+                layer.o_w    = get_tensor(string_format(TN_ATTN_OUTPUT, prefix, il, "weight"));
+                layer.k_norm = get_tensor(string_format(TN_ATTN_K_NORM, prefix, il, "weight"), false);
+                layer.q_norm = get_tensor(string_format(TN_ATTN_Q_NORM, prefix, il, "weight"), false);
+                layer.ln_1_w = get_tensor(string_format(TN_LN_1,        prefix, il, "weight"), false);
+                layer.ln_2_w = get_tensor(string_format(TN_LN_2,        prefix, il, "weight"), false);
+                layer.ls_1_w = get_tensor(string_format(TN_LS_1,        prefix, il, "weight"), false); // no bias
+                layer.ls_2_w = get_tensor(string_format(TN_LS_2,        prefix, il, "weight"), false); // no bias
 
-            layer.k_b    = get_tensor(string_format(TN_ATTN_K,      prefix, il, "bias"), false);
-            layer.q_b    = get_tensor(string_format(TN_ATTN_Q,      prefix, il, "bias"), false);
-            layer.v_b    = get_tensor(string_format(TN_ATTN_V,      prefix, il, "bias"), false);
-            layer.o_b    = get_tensor(string_format(TN_ATTN_OUTPUT, prefix, il, "bias"), false);
-            layer.ln_1_b = get_tensor(string_format(TN_LN_1,        prefix, il, "bias"), false);
-            layer.ln_2_b = get_tensor(string_format(TN_LN_2,        prefix, il, "bias"), false);
+                layer.k_b    = get_tensor(string_format(TN_ATTN_K,      prefix, il, "bias"), false);
+                layer.q_b    = get_tensor(string_format(TN_ATTN_Q,      prefix, il, "bias"), false);
+                layer.v_b    = get_tensor(string_format(TN_ATTN_V,      prefix, il, "bias"), false);
+                layer.o_b    = get_tensor(string_format(TN_ATTN_OUTPUT, prefix, il, "bias"), false);
+                layer.ln_1_b = get_tensor(string_format(TN_LN_1,        prefix, il, "bias"), false);
+                layer.ln_2_b = get_tensor(string_format(TN_LN_2,        prefix, il, "bias"), false);
 
-            // ffn
-            layer.ff_up_w   = get_tensor(string_format(TN_FFN_UP,   prefix, il, "weight"));
-            layer.ff_up_b   = get_tensor(string_format(TN_FFN_UP,   prefix, il, "bias"),   false);
-            layer.ff_gate_w = get_tensor(string_format(TN_FFN_GATE, prefix, il, "weight"), false);
-            layer.ff_gate_b = get_tensor(string_format(TN_FFN_GATE, prefix, il, "bias"),   false);
-            layer.ff_down_w = get_tensor(string_format(TN_FFN_DOWN, prefix, il, "weight"));
-            layer.ff_down_b = get_tensor(string_format(TN_FFN_DOWN, prefix, il, "bias"),   false);
+                // ffn
+                layer.ff_up_w   = get_tensor(string_format(TN_FFN_UP,   prefix, il, "weight"));
+                layer.ff_up_b   = get_tensor(string_format(TN_FFN_UP,   prefix, il, "bias"),   false);
+                layer.ff_gate_w = get_tensor(string_format(TN_FFN_GATE, prefix, il, "weight"), false);
+                layer.ff_gate_b = get_tensor(string_format(TN_FFN_GATE, prefix, il, "bias"),   false);
+                layer.ff_down_w = get_tensor(string_format(TN_FFN_DOWN, prefix, il, "weight"));
+                layer.ff_down_b = get_tensor(string_format(TN_FFN_DOWN, prefix, il, "bias"),   false);
 
-            // some models already exported with legacy (incorrect) naming which is quite messy, let's fix it here
-            // note: Qwen model converted from the old surgery script has n_ff = 0, so we cannot use n_ff to check!
-            if (layer.ff_up_w && layer.ff_down_w && layer.ff_down_w->ne[0] == hparams.n_embd) {
-                // swap up and down weights
-                ggml_tensor * tmp = layer.ff_up_w;
-                layer.ff_up_w = layer.ff_down_w;
-                layer.ff_down_w = tmp;
-                // swap up and down biases
-                tmp = layer.ff_up_b;
-                layer.ff_up_b = layer.ff_down_b;
-                layer.ff_down_b = tmp;
+                // some models already exported with legacy (incorrect) naming which is quite messy, let's fix it here
+                // note: Qwen model converted from the old surgery script has n_ff = 0, so we cannot use n_ff to check!
+                if (layer.ff_up_w && layer.ff_down_w && layer.ff_down_w->ne[0] == hparams.n_embd) {
+                    // swap up and down weights
+                    ggml_tensor * tmp = layer.ff_up_w;
+                    layer.ff_up_w = layer.ff_down_w;
+                    layer.ff_down_w = tmp;
+                    // swap up and down biases
+                    tmp = layer.ff_up_b;
+                    layer.ff_up_b = layer.ff_down_b;
+                    layer.ff_down_b = tmp;
+                }
             }
         }
 
@@ -2709,6 +2711,79 @@ struct clip_model_loader {
                     model.mm_0_b = get_tensor(string_format(TN_LLAVA_PROJ, 0, "bias"));
                     model.mm_1_w = get_tensor(string_format(TN_LLAVA_PROJ, 2, "weight"));
                     model.mm_1_b = get_tensor(string_format(TN_LLAVA_PROJ, 2, "bias"));
+                } break;
+            case PROJECTOR_TYPE_DOCFUSION:
+                {
+                    auto & dv = hparams.davit_hparams;
+                    const int num_stages = (int) dv.dim_embed.size();
+
+                    model.layers.clear();
+                    model.image_proj = get_tensor(TN_MM_INP_PROJ, false);
+                    model.image_proj_norm_w = get_tensor(string_format(TN_OUT_PROJ, "weight"));
+                    model.image_proj_norm_b = get_tensor(string_format(TN_OUT_PROJ, "bias"));
+
+                    if (dv.image_pos_embed.type == DAVIT_IMAGE_POS_EMBED_TYPE_LEARNED_ABS_2D) {
+                        model.pos_c = get_tensor(TN_DOCFUSION_POS_C, false);
+                        model.pos_r = get_tensor(TN_DOCFUSION_POS_R, false);
+                    }
+                    if (dv.temporal_embedding.type == DAVIT_TEMPORAL_EMBEDDING_TYPE_COSINE) {
+                        model.pos_to_embed = get_tensor(TN_DOCFUSION_POS_TO_EMBED, false);
+                        model.temporal_embed_pos_to_embed = get_tensor(TN_DOCFUSION_TEMPORAL_EMBED_POS_TO_EMBED, false);
+                    }
+
+                    for (int i = 0; i < num_stages; ++i) {
+                        clip_layer layer;
+                        layer.convs_proj_w = get_tensor(string_format(TN_DOCFUSION_CONVS_PROJ, i, "weight"));
+                        layer.convs_proj_b = get_tensor(string_format(TN_DOCFUSION_CONVS_PROJ, i, "bias"));
+                        layer.convs_norm_w = get_tensor(string_format(TN_DOCFUSION_CONVS_NORM, i, "weight"), false);
+                        layer.convs_norm_b = get_tensor(string_format(TN_DOCFUSION_CONVS_NORM, i, "bias"), false);
+
+                        for (int j = 0; j < dv.depths[i]; ++j) {
+                            layer.spatial_block_conv1_fn_dw_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_CONV1_FN_DW, i, j, "weight")));
+                            layer.spatial_block_conv1_fn_dw_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_CONV1_FN_DW, i, j, "bias")));
+                            layer.spatial_block_attn_norm_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_NORM, i, j, "weight"), false));
+                            layer.spatial_block_attn_norm_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_NORM, i, j, "bias"), false));
+                            layer.spatial_block_attn_fn_q_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_Q, i, j, "weight")));
+                            layer.spatial_block_attn_fn_q_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_Q, i, j, "bias")));
+                            layer.spatial_block_attn_fn_k_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_K, i, j, "weight")));
+                            layer.spatial_block_attn_fn_k_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_K, i, j, "bias")));
+                            layer.spatial_block_attn_fn_v_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_V, i, j, "weight")));
+                            layer.spatial_block_attn_fn_v_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_V, i, j, "bias")));
+                            layer.spatial_block_attn_fn_proj_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_PROJ, i, j, "weight")));
+                            layer.spatial_block_attn_fn_proj_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_ATTN_FN_PROJ, i, j, "bias")));
+                            layer.spatial_block_conv2_fn_dw_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_CONV2_FN_DW, i, j, "weight")));
+                            layer.spatial_block_conv2_fn_dw_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_CONV2_FN_DW, i, j, "bias")));
+                            layer.spatial_block_ffn_norm_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_FFN_NORM, i, j, "weight"), false));
+                            layer.spatial_block_ffn_norm_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_FFN_NORM, i, j, "bias"), false));
+                            layer.spatial_block_ffn_fn_net_fc1_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_FFN_FN_NET_FC1, i, j, "weight")));
+                            layer.spatial_block_ffn_fn_net_fc1_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_FFN_FN_NET_FC1, i, j, "bias")));
+                            layer.spatial_block_ffn_fn_net_fc2_w.push_back(get_tensor(string_format(TN_DOCFUSION_SP_FFN_FN_NET_FC2, i, j, "weight")));
+                            layer.spatial_block_ffn_fn_net_fc2_b.push_back(get_tensor(string_format(TN_DOCFUSION_SP_FFN_FN_NET_FC2, i, j, "bias")));
+
+                            layer.channel_block_conv1_fn_dw_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_CONV1_FN_DW, i, j, "weight")));
+                            layer.channel_block_conv1_fn_dw_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_CONV1_FN_DW, i, j, "bias")));
+                            layer.channel_block_attn_norm_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_NORM, i, j, "weight"), false));
+                            layer.channel_block_attn_norm_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_NORM, i, j, "bias"), false));
+                            layer.channel_block_attn_fn_q_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_Q, i, j, "weight")));
+                            layer.channel_block_attn_fn_q_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_Q, i, j, "bias")));
+                            layer.channel_block_attn_fn_k_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_K, i, j, "weight")));
+                            layer.channel_block_attn_fn_k_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_K, i, j, "bias")));
+                            layer.channel_block_attn_fn_v_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_V, i, j, "weight")));
+                            layer.channel_block_attn_fn_v_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_V, i, j, "bias")));
+                            layer.channel_block_attn_fn_proj_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_PROJ, i, j, "weight")));
+                            layer.channel_block_attn_fn_proj_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_ATTN_FN_PROJ, i, j, "bias")));
+                            layer.channel_block_conv2_fn_dw_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_CONV2_FN_DW, i, j, "weight")));
+                            layer.channel_block_conv2_fn_dw_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_CONV2_FN_DW, i, j, "bias")));
+                            layer.channel_block_ffn_norm_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_FFN_NORM, i, j, "weight"), false));
+                            layer.channel_block_ffn_norm_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_FFN_NORM, i, j, "bias"), false));
+                            layer.channel_block_ffn_fn_net_fc1_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_FFN_FN_NET_FC1, i, j, "weight")));
+                            layer.channel_block_ffn_fn_net_fc1_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_FFN_FN_NET_FC1, i, j, "bias")));
+                            layer.channel_block_ffn_fn_net_fc2_w.push_back(get_tensor(string_format(TN_DOCFUSION_CN_FFN_FN_NET_FC2, i, j, "weight")));
+                            layer.channel_block_ffn_fn_net_fc2_b.push_back(get_tensor(string_format(TN_DOCFUSION_CN_FFN_FN_NET_FC2, i, j, "bias")));
+                        }
+
+                        model.layers.push_back(std::move(layer));
+                    }
                 } break;
             case PROJECTOR_TYPE_GEMMA3:
                 {
