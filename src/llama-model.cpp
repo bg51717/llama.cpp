@@ -1756,6 +1756,60 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             return ml.create_tensor(ctx, tn, ne, flags);
         };
 
+        auto create_tensor_by_name = [&](const std::string & name, const std::initializer_list<int64_t> & ne, int flags, ggml_op op = GGML_OP_GET_ROWS) -> ggml_tensor * {
+            ggml_tensor * t_meta = ml.get_tensor_meta(name.c_str());
+
+            if (!t_meta) {
+                if (flags & TENSOR_NOT_REQUIRED) {
+                    return nullptr;
+                }
+                throw std::runtime_error(format("missing tensor '%s'", name.c_str()));
+            }
+
+            buft_list_t * buft_list = pimpl->dev_input.buft_list;
+            ggml_backend_buffer_type_t buft = nullptr;
+
+            if (ml.tensor_buft_overrides) {
+                for (const auto * overrides = ml.tensor_buft_overrides; overrides->pattern != nullptr; ++overrides) {
+                    std::regex pattern(overrides->pattern);
+                    if (std::regex_search(name, pattern)) {
+                        buft = overrides->buft;
+                        LLAMA_LOG_DEBUG("tensor %s (%zu MiB %s) buffer type overridden to %s\n",
+                                name.c_str(),
+                                ggml_nbytes(t_meta) / 1024 / 1024, ggml_type_name(t_meta->type),
+                                ggml_backend_buft_name(buft));
+                        break;
+                    }
+                }
+            }
+
+            if (!buft) {
+                buft = select_weight_buft(hparams, t_meta, op, *buft_list);
+                if (!buft) {
+                    throw std::runtime_error(format("failed to find a compatible buffer type for tensor %s", name.c_str()));
+                }
+            }
+
+            auto * buft_dev = ggml_backend_buft_get_device(buft);
+            if (ml.use_mmap && buft_dev && buft == ggml_backend_dev_host_buffer_type(buft_dev)) {
+                auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+                if (!cpu_dev) {
+                    throw std::runtime_error("no CPU backend found");
+                }
+                buft = ggml_backend_dev_buffer_type(cpu_dev);
+            }
+
+            ggml_context * ctx = ctx_for_buft(buft);
+            if (flags & TENSOR_DUPLICATED) {
+                ggml_tensor * t = ggml_get_tensor(ctx, name.c_str());
+                if (t) {
+                    return t;
+                }
+            }
+
+            return ml.create_tensor(ctx, name, ne, flags);
+        };
+
         layers.resize(n_layer);
 
         // TODO: move to a separate function
@@ -3539,6 +3593,79 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         layer.ffn_gate_enc = create_tensor(tn(LLM_TENSOR_ENC_FFN_GATE, "weight", i), {n_embd,   n_ff}, TENSOR_NOT_REQUIRED);
                         layer.ffn_down_enc = create_tensor(tn(LLM_TENSOR_ENC_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                         layer.ffn_up_enc   = create_tensor(tn(LLM_TENSOR_ENC_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+                    }
+                } break;
+            case LLM_ARCH_DOCFUSION:
+                {
+                    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
+
+                    // token embedding norms for decoder / encoder paths
+                    output_norm     = create_tensor(tn(LLM_TENSOR_DEC_OUTPUT_NORM, "weight"), { n_embd }, 0);
+                    output_norm_b   = create_tensor(tn(LLM_TENSOR_DEC_OUTPUT_NORM, "bias"),   { n_embd }, 0);
+                    output_norm_enc = create_tensor(tn(LLM_TENSOR_ENC_OUTPUT_NORM, "weight"), { n_embd }, 0);
+                    output_norm_enc_b = create_tensor(tn(LLM_TENSOR_ENC_OUTPUT_NORM, "bias"), { n_embd }, 0);
+
+                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab }, TENSOR_NOT_REQUIRED);
+                    if (output == NULL) {
+                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
+                    }
+
+                    // optional absolute position tables
+                    pos_embd_enc = create_tensor_by_name("enc.pos_embd.weight", { n_embd, n_ctx_train }, TENSOR_NOT_REQUIRED);
+                    pos_embd_dec = create_tensor_by_name("dec.pos_embd.weight", { n_embd, n_ctx_train }, TENSOR_NOT_REQUIRED);
+
+                    for (int i = 0; i < n_layer; ++i) {
+                        auto & layer = layers[i];
+
+                        // encoder
+                        layer.attn_norm_enc   = create_tensor(tn(LLM_TENSOR_ENC_ATTN_NORM, "weight", i), { n_embd }, TENSOR_NOT_REQUIRED);
+                        layer.attn_norm_enc_b = create_tensor(tn(LLM_TENSOR_ENC_ATTN_NORM, "bias",   i), { n_embd }, TENSOR_NOT_REQUIRED);
+                        layer.wq_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_Q,    "weight", i), { n_embd, n_embd_k_gqa }, TENSOR_NOT_REQUIRED);
+                        layer.bq_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_Q,    "bias",   i), { n_embd_k_gqa }, TENSOR_NOT_REQUIRED);
+                        layer.wk_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_K,    "weight", i), { n_embd, n_embd_k_gqa }, TENSOR_NOT_REQUIRED);
+                        layer.bk_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_K,    "bias",   i), { n_embd_k_gqa }, TENSOR_NOT_REQUIRED);
+                        layer.wv_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_V,    "weight", i), { n_embd, n_embd_v_gqa }, TENSOR_NOT_REQUIRED);
+                        layer.bv_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_V,    "bias",   i), { n_embd_v_gqa }, TENSOR_NOT_REQUIRED);
+                        layer.wo_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_OUT,  "weight", i), { n_embd_v_gqa, n_embd }, TENSOR_NOT_REQUIRED);
+                        layer.bo_enc          = create_tensor(tn(LLM_TENSOR_ENC_ATTN_OUT,  "bias",   i), { n_embd }, TENSOR_NOT_REQUIRED);
+                        layer.ffn_up_enc      = create_tensor(tn(LLM_TENSOR_ENC_FFN_UP,    "weight", i), { n_embd, n_ff }, TENSOR_NOT_REQUIRED);
+                        layer.ffn_up_enc_b    = create_tensor(tn(LLM_TENSOR_ENC_FFN_UP,    "bias",   i), { n_ff }, TENSOR_NOT_REQUIRED);
+                        layer.ffn_down_enc    = create_tensor(tn(LLM_TENSOR_ENC_FFN_DOWN,  "weight", i), { n_ff, n_embd }, TENSOR_NOT_REQUIRED);
+                        layer.ffn_down_enc_b  = create_tensor(tn(LLM_TENSOR_ENC_FFN_DOWN,  "bias",   i), { n_embd }, TENSOR_NOT_REQUIRED);
+                        layer.ffn_norm_enc    = create_tensor(tn(LLM_TENSOR_ENC_FFN_NORM,  "weight", i), { n_embd }, TENSOR_NOT_REQUIRED);
+                        layer.ffn_norm_enc_b  = create_tensor(tn(LLM_TENSOR_ENC_FFN_NORM,  "bias",   i), { n_embd }, TENSOR_NOT_REQUIRED);
+
+                        // decoder self-attention
+                        layer.attn_norm   = create_tensor(tn(LLM_TENSOR_DEC_ATTN_NORM, "weight", i), { n_embd }, 0);
+                        layer.attn_norm_b = create_tensor(tn(LLM_TENSOR_DEC_ATTN_NORM, "bias",   i), { n_embd }, 0);
+                        layer.wq          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_Q,    "weight", i), { n_embd, n_embd_k_gqa }, 0);
+                        layer.bq          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_Q,    "bias",   i), { n_embd_k_gqa }, 0);
+                        layer.wk          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_K,    "weight", i), { n_embd, n_embd_k_gqa }, 0);
+                        layer.bk          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_K,    "bias",   i), { n_embd_k_gqa }, 0);
+                        layer.wv          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_V,    "weight", i), { n_embd, n_embd_v_gqa }, 0);
+                        layer.bv          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_V,    "bias",   i), { n_embd_v_gqa }, 0);
+                        layer.wo          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_OUT,  "weight", i), { n_embd_v_gqa, n_embd }, 0);
+                        layer.bo          = create_tensor(tn(LLM_TENSOR_DEC_ATTN_OUT,  "bias",   i), { n_embd }, 0);
+
+                        // decoder cross-attention
+                        layer.attn_norm_cross   = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_NORM, "weight", i), { n_embd }, 0);
+                        layer.attn_norm_cross_b = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_NORM, "bias",   i), { n_embd }, 0);
+                        layer.wq_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_Q,    "weight", i), { n_embd, n_embd_k_gqa }, 0);
+                        layer.bq_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_Q,    "bias",   i), { n_embd_k_gqa }, 0);
+                        layer.wk_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_K,    "weight", i), { n_embd, n_embd_k_gqa }, 0);
+                        layer.bk_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_K,    "bias",   i), { n_embd_k_gqa }, 0);
+                        layer.wv_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_V,    "weight", i), { n_embd, n_embd_v_gqa }, 0);
+                        layer.bv_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_V,    "bias",   i), { n_embd_v_gqa }, 0);
+                        layer.wo_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_OUT,  "weight", i), { n_embd_v_gqa, n_embd }, 0);
+                        layer.bo_cross          = create_tensor(tn(LLM_TENSOR_DEC_CROSS_ATTN_OUT,  "bias",   i), { n_embd }, 0);
+
+                        // decoder FFN
+                        layer.ffn_up     = create_tensor(tn(LLM_TENSOR_DEC_FFN_UP,   "weight", i), { n_embd, n_ff }, 0);
+                        layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_DEC_FFN_UP,   "bias",   i), { n_ff }, 0);
+                        layer.ffn_down   = create_tensor(tn(LLM_TENSOR_DEC_FFN_DOWN, "weight", i), { n_ff, n_embd }, 0);
+                        layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_DEC_FFN_DOWN, "bias",   i), { n_embd }, 0);
+                        layer.ffn_norm   = create_tensor(tn(LLM_TENSOR_DEC_FFN_NORM, "weight", i), { n_embd }, 0);
+                        layer.ffn_norm_b = create_tensor(tn(LLM_TENSOR_DEC_FFN_NORM, "bias",   i), { n_embd }, 0);
                     }
                 } break;
             case LLM_ARCH_JAIS:
