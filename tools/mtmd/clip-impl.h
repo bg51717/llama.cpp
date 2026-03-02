@@ -45,6 +45,39 @@
 #define KEY_ATTN_WINDOW_SIZE      "clip.vision.window_size"
 #define KEY_MINICPMV_VERSION      "clip.minicpmv_version"
 
+// docfusion-specific (DaViT vision tower)
+#define KEY_DAVIT_VISION_DROP_PATH_RATE       "davit_vision.drop_path_rate"
+#define KEY_DAVIT_VISION_PATCH_SIZE           "davit_vision.patch_size"
+#define KEY_DAVIT_VISION_PATCH_STRIDE         "davit_vision.patch_stride"
+#define KEY_DAVIT_VISION_PATCH_PADDING        "davit_vision.patch_padding"
+#define KEY_DAVIT_VISION_PATCH_PRENORM        "davit_vision.patch_prenorm"
+#define KEY_DAVIT_VISION_ENABLE_CHECKPOINT    "davit_vision.enable_checkpoint"
+#define KEY_DAVIT_VISION_DIM_EMBED            "davit_vision.dim_embed"
+#define KEY_DAVIT_VISION_NUM_HEADS            "davit_vision.num_heads"
+#define KEY_DAVIT_VISION_NUM_GROUPS           "davit_vision.num_groups"
+#define KEY_DAVIT_VISION_DEPTHS               "davit_vision.depths"
+#define KEY_DAVIT_VISION_WINDOW_SIZE          "davit_vision.window_size"
+#define KEY_DAVIT_VISION_PROJECT_DIM          "davit_vision.projection_dim"
+#define KEY_DAVIT_VISION_IMAGE_FEATURE_SOURCE "davit_vision.image_feature_source"
+#define KEY_DAVIT_VISION_MODEL_TYPE           "davit_vision.model_type"
+#define KEY_DAVIT_VISION_TEMP_EMB_TYPE        "davit_vision.temporal_embedding.type"
+#define KEY_DAVIT_VISION_TEMP_EMB_MAX         "davit_vision.temporal_embedding.max_embeddings"
+#define KEY_DAVIT_VISION_IMG_POS_EMB_TYPE     "davit_vision.image_pos_embed.type"
+#define KEY_DAVIT_VISION_IMG_POS_EMB_MAX      "davit_vision.image_pos_embed.max_embeddings"
+#define KEY_DAVIT_VISION_PROCESS_DO_CONVERT_RGB      "davit_vision.preprocess.do_convert_rgb"
+#define KEY_DAVIT_VISION_PROCESS_DO_NORMALIZE        "davit_vision.preprocess.do_normalize"
+#define KEY_DAVIT_VISION_PROCESS_DO_RESCALE          "davit_vision.preprocess.do_rescale"
+#define KEY_DAVIT_VISION_PROCESS_DO_RESIZE           "davit_vision.preprocess.do_resize"
+#define KEY_DAVIT_VISION_PROCESS_DO_CENTER_CROP      "davit_vision.preprocess.do_center_crop"
+#define KEY_DAVIT_VISION_PROCESS_IMAGE_PROCESSOR_TYPE "davit_vision.preprocess.image_processor_type"
+#define KEY_DAVIT_VISION_PROCESS_IMAGE_SEQ_LENGTH    "davit_vision.preprocess.image_seq_length"
+#define KEY_DAVIT_VISION_PROCESS_IMAGE_MEAN          "davit_vision.preprocess.image_mean"
+#define KEY_DAVIT_VISION_PROCESS_IMAGE_STD           "davit_vision.preprocess.image_std"
+#define KEY_DAVIT_VISION_PROCESSOR_CLASS             "davit_vision.preprocess.processor_class"
+#define KEY_DAVIT_VISION_PROCESS_RESAMPLE            "davit_vision.preprocess.resample"
+#define KEY_DAVIT_VISION_PROCESS_SIZE                "davit_vision.preprocess.size"
+#define KEY_DAVIT_VISION_PROCESS_CROP_SIZE           "davit_vision.preprocess.crop_size"
+
 // audio-specific
 #define KEY_A_NUM_MEL_BINS      "clip.audio.num_mel_bins"
 #define KEY_A_PROJ_STACK_FACTOR "clip.audio.projector.stack_factor"
@@ -104,6 +137,36 @@
 #define TN_GLM_ADAPTER_GATE     "adapter.linear.gate.%s"
 #define TN_GLM_ADAPTER_D_4H_2_H "adapter.linear.dense_4h_to_h.%s"
 
+// docfusion tensors
+#define TN_DOCFUSION_CONVS_PROJ                 "v.convs.%d.proj.%s"
+#define TN_DOCFUSION_CONVS_NORM                 "v.convs.%d.norm.%s"
+#define TN_DOCFUSION_POS_C                      "v.pos_c"
+#define TN_DOCFUSION_POS_R                      "v.pos_r"
+#define TN_DOCFUSION_POS_TO_EMBED               "v.pos_idx_to_embed"
+#define TN_DOCFUSION_TEMPORAL_EMBED_POS_TO_EMBED "visual_temporal_embed.pos_idx_to_embed"
+#define TN_DOCFUSION_SP_CONV1_FN_DW             "v.blk.%d.%d.spatial_block.conv1.fn.dw.%s"
+#define TN_DOCFUSION_SP_ATTN_NORM               "v.blk.%d.%d.spatial_block.window_attn.norm.%s"
+#define TN_DOCFUSION_SP_ATTN_FN_QKV             "v.blk.%d.%d.spatial_block.window_attn.fn.qkv.%s"
+#define TN_DOCFUSION_SP_ATTN_FN_Q               "v.blk.%d.%d.spatial_block.window_attn.fn.q.%s"
+#define TN_DOCFUSION_SP_ATTN_FN_K               "v.blk.%d.%d.spatial_block.window_attn.fn.k.%s"
+#define TN_DOCFUSION_SP_ATTN_FN_V               "v.blk.%d.%d.spatial_block.window_attn.fn.v.%s"
+#define TN_DOCFUSION_SP_ATTN_FN_PROJ            "v.blk.%d.%d.spatial_block.window_attn.fn.proj.%s"
+#define TN_DOCFUSION_SP_CONV2_FN_DW             "v.blk.%d.%d.spatial_block.conv2.fn.dw.%s"
+#define TN_DOCFUSION_SP_FFN_NORM                "v.blk.%d.%d.spatial_block.ffn.norm.%s"
+#define TN_DOCFUSION_SP_FFN_FN_NET_FC1          "v.blk.%d.%d.spatial_block.ffn.fn.net.fc1.%s"
+#define TN_DOCFUSION_SP_FFN_FN_NET_FC2          "v.blk.%d.%d.spatial_block.ffn.fn.net.fc2.%s"
+#define TN_DOCFUSION_CN_CONV1_FN_DW             "v.blk.%d.%d.channel_block.conv1.fn.dw.%s"
+#define TN_DOCFUSION_CN_ATTN_NORM               "v.blk.%d.%d.channel_block.channel_attn.norm.%s"
+#define TN_DOCFUSION_CN_ATTN_FN_QKV             "v.blk.%d.%d.channel_block.channel_attn.fn.qkv.%s"
+#define TN_DOCFUSION_CN_ATTN_FN_Q               "v.blk.%d.%d.channel_block.channel_attn.fn.q.%s"
+#define TN_DOCFUSION_CN_ATTN_FN_K               "v.blk.%d.%d.channel_block.channel_attn.fn.k.%s"
+#define TN_DOCFUSION_CN_ATTN_FN_V               "v.blk.%d.%d.channel_block.channel_attn.fn.v.%s"
+#define TN_DOCFUSION_CN_ATTN_FN_PROJ            "v.blk.%d.%d.channel_block.channel_attn.fn.proj.%s"
+#define TN_DOCFUSION_CN_CONV2_FN_DW             "v.blk.%d.%d.channel_block.conv2.fn.dw.%s"
+#define TN_DOCFUSION_CN_FFN_NORM                "v.blk.%d.%d.channel_block.ffn.norm.%s"
+#define TN_DOCFUSION_CN_FFN_FN_NET_FC1          "v.blk.%d.%d.channel_block.ffn.fn.net.fc1.%s"
+#define TN_DOCFUSION_CN_FFN_FN_NET_FC2          "v.blk.%d.%d.channel_block.ffn.fn.net.fc2.%s"
+
 // ultravox
 #define TN_CONV1D       "a.conv1d.%d.%s"
 #define TN_MM_AUDIO_MLP "mm.a.mlp.%d.%s"
@@ -130,6 +193,7 @@ enum projector_type {
     PROJECTOR_TYPE_INTERNVL,
     PROJECTOR_TYPE_LLAMA4,
     PROJECTOR_TYPE_QWEN2A,
+    PROJECTOR_TYPE_DOCFUSION,
     PROJECTOR_TYPE_QWEN25O, // will be replaced by QWEN2A or QWEN25VL depending on clip_ctx
     PROJECTOR_TYPE_UNKNOWN,
 };
@@ -149,6 +213,7 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_INTERNVL,  "internvl"},
     { PROJECTOR_TYPE_LLAMA4,    "llama4"},
     { PROJECTOR_TYPE_QWEN2A,    "qwen2a"},
+    { PROJECTOR_TYPE_DOCFUSION, "docfusion"},
     { PROJECTOR_TYPE_QWEN25O,   "qwen2.5o"},
 };
 

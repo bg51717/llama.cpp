@@ -162,6 +162,59 @@ enum patch_merge_type {
     PATCH_MERGE_SPATIAL_UNPAD,
 };
 
+enum davit_temporal_embedding_type {
+    DAVIT_TEMPORAL_EMBEDDING_TYPE_NONE   = 0,
+    DAVIT_TEMPORAL_EMBEDDING_TYPE_COSINE = 1,
+};
+
+enum davit_image_pos_embed_type {
+    DAVIT_IMAGE_POS_EMBED_TYPE_NONE           = 0,
+    DAVIT_IMAGE_POS_EMBED_TYPE_LEARNED_ABS_2D = 1,
+};
+
+struct Davit_Hparams {
+    float                drop_path_rate = 0.0f;
+    std::vector<int32_t> patch_size;
+    std::vector<int32_t> patch_stride;
+    std::vector<int32_t> patch_padding;
+    std::vector<bool>    patch_prenorm;
+    bool                 enable_checkpoint = false;
+    std::vector<int32_t> dim_embed;
+    std::vector<int32_t> num_heads;
+    std::vector<int32_t> num_groups;
+    std::vector<int32_t> depths;
+    int32_t              window_size = 0;
+    int32_t              project_dim = 0;
+    std::string          image_feature_source;
+    std::string          model_type;
+
+    struct {
+        davit_temporal_embedding_type type = DAVIT_TEMPORAL_EMBEDDING_TYPE_NONE;
+        int32_t max_embeddings = 0;
+    } temporal_embedding;
+
+    struct {
+        davit_image_pos_embed_type type = DAVIT_IMAGE_POS_EMBED_TYPE_NONE;
+        int32_t max_embeddings = 0;
+    } image_pos_embed;
+
+    struct {
+        bool do_convert_rgb = false;
+        bool do_normalize = false;
+        bool do_rescale = false;
+        bool do_resize = false;
+        bool do_center_crop = false;
+        std::string image_processor_type;
+        int32_t image_seq_length = 0;
+        std::vector<float> image_mean;
+        std::vector<float> image_std;
+        std::string processor_class;
+        int32_t resample = 0;
+        std::map<std::string, int32_t> size;
+        std::map<std::string, int32_t> crop_size;
+    } preprocess;
+};
+
 struct clip_hparams {
     int32_t image_size;
     int32_t patch_size;
@@ -197,6 +250,9 @@ struct clip_hparams {
     // audio
     int32_t n_mel_bins = 0; // whisper preprocessor
     int32_t proj_stack_factor = 0; // ultravox
+
+    // docfusion (davit vision tower)
+    Davit_Hparams davit_hparams;
 
     // legacy
     bool has_llava_projector = false;
@@ -236,6 +292,60 @@ struct clip_layer {
     // layer scale (no bias)
     ggml_tensor * ls_1_w = nullptr;
     ggml_tensor * ls_2_w = nullptr;
+
+    // docfusion davit stem
+    ggml_tensor * convs_proj_w = nullptr;
+    ggml_tensor * convs_proj_b = nullptr;
+    ggml_tensor * convs_norm_w = nullptr;
+    ggml_tensor * convs_norm_b = nullptr;
+
+    // docfusion davit spatial block
+    std::vector<ggml_tensor *> spatial_block_conv1_fn_dw_w;
+    std::vector<ggml_tensor *> spatial_block_conv1_fn_dw_b;
+    std::vector<ggml_tensor *> spatial_block_attn_norm_w;
+    std::vector<ggml_tensor *> spatial_block_attn_norm_b;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_qkv_w;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_qkv_b;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_q_w;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_q_b;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_k_w;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_k_b;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_v_w;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_v_b;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_proj_w;
+    std::vector<ggml_tensor *> spatial_block_attn_fn_proj_b;
+    std::vector<ggml_tensor *> spatial_block_conv2_fn_dw_w;
+    std::vector<ggml_tensor *> spatial_block_conv2_fn_dw_b;
+    std::vector<ggml_tensor *> spatial_block_ffn_norm_w;
+    std::vector<ggml_tensor *> spatial_block_ffn_norm_b;
+    std::vector<ggml_tensor *> spatial_block_ffn_fn_net_fc1_w;
+    std::vector<ggml_tensor *> spatial_block_ffn_fn_net_fc1_b;
+    std::vector<ggml_tensor *> spatial_block_ffn_fn_net_fc2_w;
+    std::vector<ggml_tensor *> spatial_block_ffn_fn_net_fc2_b;
+
+    // docfusion davit channel block
+    std::vector<ggml_tensor *> channel_block_conv1_fn_dw_w;
+    std::vector<ggml_tensor *> channel_block_conv1_fn_dw_b;
+    std::vector<ggml_tensor *> channel_block_attn_norm_w;
+    std::vector<ggml_tensor *> channel_block_attn_norm_b;
+    std::vector<ggml_tensor *> channel_block_attn_fn_qkv_w;
+    std::vector<ggml_tensor *> channel_block_attn_fn_qkv_b;
+    std::vector<ggml_tensor *> channel_block_attn_fn_q_w;
+    std::vector<ggml_tensor *> channel_block_attn_fn_q_b;
+    std::vector<ggml_tensor *> channel_block_attn_fn_k_w;
+    std::vector<ggml_tensor *> channel_block_attn_fn_k_b;
+    std::vector<ggml_tensor *> channel_block_attn_fn_v_w;
+    std::vector<ggml_tensor *> channel_block_attn_fn_v_b;
+    std::vector<ggml_tensor *> channel_block_attn_fn_proj_w;
+    std::vector<ggml_tensor *> channel_block_attn_fn_proj_b;
+    std::vector<ggml_tensor *> channel_block_conv2_fn_dw_w;
+    std::vector<ggml_tensor *> channel_block_conv2_fn_dw_b;
+    std::vector<ggml_tensor *> channel_block_ffn_norm_w;
+    std::vector<ggml_tensor *> channel_block_ffn_norm_b;
+    std::vector<ggml_tensor *> channel_block_ffn_fn_net_fc1_w;
+    std::vector<ggml_tensor *> channel_block_ffn_fn_net_fc1_b;
+    std::vector<ggml_tensor *> channel_block_ffn_fn_net_fc2_w;
+    std::vector<ggml_tensor *> channel_block_ffn_fn_net_fc2_b;
 };
 
 struct clip_model {
@@ -354,6 +464,17 @@ struct clip_model {
     ggml_tensor * conv1d_2_b = nullptr;
     ggml_tensor * mm_norm_pre_w = nullptr;
     ggml_tensor * mm_norm_mid_w = nullptr;
+
+    // docfusion projector / positional embeddings
+    ggml_tensor * image_proj_norm_w = nullptr;
+    ggml_tensor * image_proj_norm_b = nullptr;
+    ggml_tensor * pos_idx_to_embed = nullptr;
+    ggml_tensor * temporal_idx_to_embed = nullptr;
+    ggml_tensor * image_proj = nullptr;
+    ggml_tensor * pos_r = nullptr;
+    ggml_tensor * pos_c = nullptr;
+    ggml_tensor * pos_to_embed = nullptr;
+    ggml_tensor * temporal_embed_pos_to_embed = nullptr;
 };
 
 struct clip_ctx {
@@ -2226,6 +2347,107 @@ struct clip_model_loader {
                         hparams.image_size = 1024;
                         hparams.warmup_image_size = hparams.patch_size * 8;
                         get_u32(KEY_WIN_ATTN_PATTERN, hparams.n_wa_pattern);
+                    } break;
+                case PROJECTOR_TYPE_DOCFUSION:
+                    {
+                        get_u32(KEY_PROJ_SCALE_FACTOR, hparams.proj_scale_factor, false);
+                        if (hparams.image_size > 1024) {
+                            hparams.image_size = 1024;
+                        }
+                        hparams.warmup_image_size = hparams.patch_size * 8;
+
+                        auto & dv = hparams.davit_hparams;
+
+                        get_f32(KEY_DAVIT_VISION_DROP_PATH_RATE, dv.drop_path_rate, false);
+                        get_bool(KEY_DAVIT_VISION_ENABLE_CHECKPOINT, dv.enable_checkpoint, false);
+                        get_u32(KEY_DAVIT_VISION_WINDOW_SIZE, dv.window_size, false);
+                        get_u32(KEY_DAVIT_VISION_PROJECT_DIM, dv.project_dim, false);
+                        get_string(KEY_DAVIT_VISION_IMAGE_FEATURE_SOURCE, dv.image_feature_source, false);
+                        get_string(KEY_DAVIT_VISION_MODEL_TYPE, dv.model_type, false);
+
+                        get_arr_int(KEY_DAVIT_VISION_PATCH_SIZE, dv.patch_size, false);
+                        get_arr_int(KEY_DAVIT_VISION_PATCH_STRIDE, dv.patch_stride, false);
+                        get_arr_int(KEY_DAVIT_VISION_PATCH_PADDING, dv.patch_padding, false);
+                        get_arr_int(KEY_DAVIT_VISION_DIM_EMBED, dv.dim_embed, false);
+                        get_arr_int(KEY_DAVIT_VISION_NUM_HEADS, dv.num_heads, false);
+                        get_arr_int(KEY_DAVIT_VISION_NUM_GROUPS, dv.num_groups, false);
+                        get_arr_int(KEY_DAVIT_VISION_DEPTHS, dv.depths, false);
+
+                        {
+                            std::vector<int> patch_prenorm;
+                            get_arr_int(KEY_DAVIT_VISION_PATCH_PRENORM, patch_prenorm, false);
+                            dv.patch_prenorm.clear();
+                            dv.patch_prenorm.reserve(patch_prenorm.size());
+                            for (int value : patch_prenorm) {
+                                dv.patch_prenorm.push_back(value != 0);
+                            }
+                        }
+
+                        {
+                            std::string temporal_embedding_type;
+                            get_string(KEY_DAVIT_VISION_TEMP_EMB_TYPE, temporal_embedding_type, false);
+                            if (temporal_embedding_type == "COSINE") {
+                                dv.temporal_embedding.type = DAVIT_TEMPORAL_EMBEDDING_TYPE_COSINE;
+                            } else {
+                                dv.temporal_embedding.type = DAVIT_TEMPORAL_EMBEDDING_TYPE_NONE;
+                            }
+                            get_u32(KEY_DAVIT_VISION_TEMP_EMB_MAX, dv.temporal_embedding.max_embeddings, false);
+                        }
+
+                        {
+                            std::string image_pos_embedding_type;
+                            get_string(KEY_DAVIT_VISION_IMG_POS_EMB_TYPE, image_pos_embedding_type, false);
+                            if (image_pos_embedding_type == "learned_abs_2d") {
+                                dv.image_pos_embed.type = DAVIT_IMAGE_POS_EMBED_TYPE_LEARNED_ABS_2D;
+                            } else {
+                                dv.image_pos_embed.type = DAVIT_IMAGE_POS_EMBED_TYPE_NONE;
+                            }
+                            get_u32(KEY_DAVIT_VISION_IMG_POS_EMB_MAX, dv.image_pos_embed.max_embeddings, false);
+                        }
+
+                        get_bool(KEY_DAVIT_VISION_PROCESS_DO_CONVERT_RGB, dv.preprocess.do_convert_rgb, false);
+                        get_bool(KEY_DAVIT_VISION_PROCESS_DO_NORMALIZE, dv.preprocess.do_normalize, false);
+                        get_bool(KEY_DAVIT_VISION_PROCESS_DO_RESCALE, dv.preprocess.do_rescale, false);
+                        get_bool(KEY_DAVIT_VISION_PROCESS_DO_RESIZE, dv.preprocess.do_resize, false);
+                        get_bool(KEY_DAVIT_VISION_PROCESS_DO_CENTER_CROP, dv.preprocess.do_center_crop, false);
+                        get_string(KEY_DAVIT_VISION_PROCESS_IMAGE_PROCESSOR_TYPE, dv.preprocess.image_processor_type, false);
+                        get_u32(KEY_DAVIT_VISION_PROCESS_IMAGE_SEQ_LENGTH, dv.preprocess.image_seq_length, false);
+
+                        const int idx_davit_mean = gguf_find_key(ctx_gguf.get(), KEY_DAVIT_VISION_PROCESS_IMAGE_MEAN);
+                        if (idx_davit_mean >= 0) {
+                            const float * mean_data = (const float *) gguf_get_arr_data(ctx_gguf.get(), idx_davit_mean);
+                            const int mean_size = gguf_get_arr_n(ctx_gguf.get(), idx_davit_mean);
+                            dv.preprocess.image_mean.assign(mean_data, mean_data + mean_size);
+                        }
+                        const int idx_davit_std = gguf_find_key(ctx_gguf.get(), KEY_DAVIT_VISION_PROCESS_IMAGE_STD);
+                        if (idx_davit_std >= 0) {
+                            const float * std_data = (const float *) gguf_get_arr_data(ctx_gguf.get(), idx_davit_std);
+                            const int std_size = gguf_get_arr_n(ctx_gguf.get(), idx_davit_std);
+                            dv.preprocess.image_std.assign(std_data, std_data + std_size);
+                        }
+
+                        get_string(KEY_DAVIT_VISION_PROCESSOR_CLASS, dv.preprocess.processor_class, false);
+                        get_u32(KEY_DAVIT_VISION_PROCESS_RESAMPLE, dv.preprocess.resample, false);
+
+                        auto parse_map_int = [](const std::string & value) {
+                            std::map<std::string, int> out;
+                            static const std::regex re("\"([^\"]+)\"\\s*:\\s*([0-9]+)");
+                            for (std::sregex_iterator it(value.begin(), value.end(), re), end; it != end; ++it) {
+                                out[(*it)[1].str()] = std::stoi((*it)[2].str());
+                            }
+                            return out;
+                        };
+
+                        std::string kv_data;
+                        get_string(KEY_DAVIT_VISION_PROCESS_SIZE, kv_data, false);
+                        if (!kv_data.empty()) {
+                            dv.preprocess.size = parse_map_int(kv_data);
+                        }
+
+                        get_string(KEY_DAVIT_VISION_PROCESS_CROP_SIZE, kv_data, false);
+                        if (!kv_data.empty()) {
+                            dv.preprocess.crop_size = parse_map_int(kv_data);
+                        }
                     } break;
                 case PROJECTOR_TYPE_LLAMA4:
                     {
