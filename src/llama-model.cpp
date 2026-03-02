@@ -11121,6 +11121,273 @@ struct llm_build_t5_dec : public llm_graph_context {
     }
 };
 
+struct llm_build_docfusion_enc : public llm_graph_context {
+
+    llm_build_docfusion_enc(const llama_model & model,
+                            const llm_graph_params & params,
+                            ggml_cgraph * gf) :
+        llm_graph_context(params) {
+        const int64_t n_embd_head = hparams.n_embd_head_v;
+        const float   kq_scale    = 1.0f / sqrtf(float(n_embd_head));
+
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+
+        ggml_tensor * cur;
+        ggml_tensor * inpL;
+
+        inpL = build_inp_embd(model.tok_embd);
+        cb(inpL, "docfusion_enc_tok_embd", -1);
+
+        if (model.pos_embd_enc) {
+            ggml_tensor * pos_ids   = build_inp_pos();
+            ggml_tensor * pos_table = model.pos_embd_enc;
+            if (pos_table->ne[1] > 2) {
+                pos_table = ggml_view_2d(ctx0, pos_table, pos_table->ne[0], pos_table->ne[1] - 2, pos_table->nb[1],
+                                         2 * pos_table->nb[1]);
+            }
+            ggml_tensor * pos = ggml_get_rows(ctx0, pos_table, pos_ids);
+            inpL                  = ggml_add(ctx0, inpL, pos);
+            cb(inpL, "docfusion_enc_pos_embd", -1);
+        }
+
+        inpL = build_norm(inpL, model.output_norm_enc, model.output_norm_enc_b, LLM_NORM, -1);
+        cb(inpL, "docfusion_enc_token_embd_norm", -1);
+
+        auto * inp_attn = build_attn_inp_no_cache();
+
+        for (int il = 0; il < n_layer; ++il) {
+            const auto & layer = model.layers[il];
+            if (!layer.wq_enc || !layer.wk_enc || !layer.wv_enc || !layer.wo_enc || !layer.attn_norm_enc ||
+                !layer.ffn_up_enc || !layer.ffn_down_enc || !layer.ffn_norm_enc) {
+                break;
+            }
+
+            ggml_tensor * inpSA = inpL;
+
+            // self-attention
+            {
+                ggml_tensor * Qcur = build_lora_mm(layer.wq_enc, inpL);
+                if (layer.bq_enc) {
+                    Qcur = ggml_add(ctx0, Qcur, layer.bq_enc);
+                }
+                ggml_tensor * Kcur = build_lora_mm(layer.wk_enc, inpL);
+                if (layer.bk_enc) {
+                    Kcur = ggml_add(ctx0, Kcur, layer.bk_enc);
+                }
+                ggml_tensor * Vcur = build_lora_mm(layer.wv_enc, inpL);
+                if (layer.bv_enc) {
+                    Vcur = ggml_add(ctx0, Vcur, layer.bv_enc);
+                }
+
+                cb(Qcur, "docfusion_enc_Qcur", il);
+                cb(Kcur, "docfusion_enc_Kcur", il);
+                cb(Vcur, "docfusion_enc_Vcur", il);
+
+                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
+                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
+
+                cur = build_attn(inp_attn, gf, layer.wo_enc, layer.bo_enc, Qcur, Kcur, Vcur, nullptr, nullptr, kq_scale,
+                                 il);
+                cb(cur, "docfusion_enc_kqv_out", il);
+            }
+
+            cur = ggml_add(ctx0, cur, inpSA);
+            cb(cur, "docfusion_enc_attn_res", il);
+
+            cur = build_norm(cur, layer.attn_norm_enc, layer.attn_norm_enc_b, LLM_NORM, il);
+            cb(cur, "docfusion_enc_attn_norm", il);
+
+            ggml_tensor * ffn_inp = cur;
+
+            if (il == n_layer - 1) {
+                // skip computing output for unused tokens
+                ggml_tensor * inp_out_ids = build_inp_out_ids();
+                cur                       = ggml_get_rows(ctx0, cur, inp_out_ids);
+                ffn_inp                   = ggml_get_rows(ctx0, ffn_inp, inp_out_ids);
+            }
+
+            // feed-forward network
+            {
+                cur = build_ffn(cur, layer.ffn_up_enc, layer.ffn_up_enc_b, NULL, NULL, NULL, NULL, layer.ffn_down_enc,
+                                layer.ffn_down_enc_b, NULL, NULL, LLM_FFN_GELU, LLM_FFN_SEQ, il);
+                cb(cur, "docfusion_enc_ffn_out", il);
+            }
+
+            cur = ggml_add(ctx0, cur, ffn_inp);
+            cb(cur, "docfusion_enc_ffn_res", il);
+
+            cur = build_norm(cur, layer.ffn_norm_enc, layer.ffn_norm_enc_b, LLM_NORM, il);
+            cb(cur, "docfusion_enc_ffn_norm", il);
+
+            cur = build_cvec(cur, il);
+            cb(cur, "docfusion_enc_l_out", il);
+
+            // input for next layer
+            inpL = cur;
+        }
+
+        cur = inpL;
+        cb(cur, "docfusion_enc_result_embd", -1);
+        res->t_embd = cur;
+
+        ggml_build_forward_expand(gf, cur);
+    }
+};
+
+struct llm_build_docfusion_dec : public llm_graph_context {
+    llm_build_docfusion_dec(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) :
+        llm_graph_context(params) {
+        const int64_t n_embd_head = hparams.n_embd_head_v;
+        const float   kq_scale    = 1.0f / sqrtf(float(n_embd_head));
+
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+
+        ggml_tensor * cur;
+        ggml_tensor * inpL;
+
+        inpL = build_inp_embd(model.tok_embd);
+        cb(inpL, "docfusion_dec_tok_embd", -1);
+
+        if (model.pos_embd_dec) {
+            ggml_tensor * pos_ids   = build_inp_pos();
+            ggml_tensor * pos_table = model.pos_embd_dec;
+            if (pos_table->ne[1] > 2) {
+                pos_table = ggml_view_2d(ctx0, pos_table, pos_table->ne[0], pos_table->ne[1] - 2, pos_table->nb[1],
+                                         2 * pos_table->nb[1]);
+            }
+            ggml_tensor * pos = ggml_get_rows(ctx0, pos_table, pos_ids);
+            inpL                  = ggml_add(ctx0, inpL, pos);
+            cb(inpL, "docfusion_dec_pos_embd", -1);
+        }
+
+        inpL = build_norm(inpL, model.output_norm, model.output_norm_b, LLM_NORM, -1);
+        cb(inpL, "docfusion_dec_token_embd_norm", -1);
+
+        ggml_tensor * embd_enc = build_inp_cross_embd();
+        const int64_t n_outputs_enc = embd_enc->ne[1];
+
+        auto * inp_attn_self  = build_attn_inp_kv_unified();
+        auto * inp_attn_cross = build_attn_inp_cross();
+
+        for (int il = 0; il < n_layer; ++il) {
+            const auto & layer = model.layers[il];
+            ggml_tensor * inpSA = inpL;
+
+            // self-attention
+            {
+                ggml_tensor * Qcur = build_lora_mm(layer.wq, inpL);
+                if (layer.bq) {
+                    Qcur = ggml_add(ctx0, Qcur, layer.bq);
+                }
+                cb(Qcur, "docfusion_dec_self_Qcur", il);
+
+                ggml_tensor * Kcur = build_lora_mm(layer.wk, inpL);
+                if (layer.bk) {
+                    Kcur = ggml_add(ctx0, Kcur, layer.bk);
+                }
+                cb(Kcur, "docfusion_dec_self_Kcur", il);
+
+                ggml_tensor * Vcur = build_lora_mm(layer.wv, inpL);
+                if (layer.bv) {
+                    Vcur = ggml_add(ctx0, Vcur, layer.bv);
+                }
+                cb(Vcur, "docfusion_dec_self_Vcur", il);
+
+                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
+                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
+
+                cur = build_attn(inp_attn_self, gf, layer.wo, layer.bo, Qcur, Kcur, Vcur, nullptr, nullptr, kq_scale, il);
+                cb(cur, "docfusion_dec_self_kqv_out", il);
+            }
+
+            cur = ggml_add(ctx0, cur, inpSA);
+            cb(cur, "docfusion_dec_self_attn_res", il);
+
+            cur = build_norm(cur, layer.attn_norm, layer.attn_norm_b, LLM_NORM, il);
+            cb(cur, "docfusion_dec_attn_norm", il);
+
+            ggml_tensor * inpCA = cur;
+
+            // cross-attention
+            {
+                ggml_tensor * Qcur = build_lora_mm(layer.wq_cross, cur);
+                if (layer.bq_cross) {
+                    Qcur = ggml_add(ctx0, Qcur, layer.bq_cross);
+                }
+                cb(Qcur, "docfusion_dec_cross_Qcur", il);
+
+                ggml_tensor * Kcur = build_lora_mm(layer.wk_cross, embd_enc);
+                if (layer.bk_cross) {
+                    Kcur = ggml_add(ctx0, Kcur, layer.bk_cross);
+                }
+                cb(Kcur, "docfusion_dec_cross_Kcur", il);
+
+                ggml_tensor * Vcur = build_lora_mm(layer.wv_cross, embd_enc);
+                if (layer.bv_cross) {
+                    Vcur = ggml_add(ctx0, Vcur, layer.bv_cross);
+                }
+                cb(Vcur, "docfusion_dec_cross_Vcur", il);
+
+                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
+                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_outputs_enc);
+                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_outputs_enc);
+
+                cur = build_attn(inp_attn_cross, gf, layer.wo_cross, layer.bo_cross, Qcur, Kcur, Vcur, nullptr, nullptr,
+                                 kq_scale, il);
+                cb(cur, "docfusion_dec_cross_kqv_out", il);
+            }
+
+            cur = ggml_add(ctx0, cur, inpCA);
+            cb(cur, "docfusion_dec_cross_attn_res", il);
+
+            cur = build_norm(cur, layer.attn_norm_cross, layer.attn_norm_cross_b, LLM_NORM, il);
+            cb(cur, "docfusion_dec_attn_norm_cross", il);
+
+            ggml_tensor * ffn_inp = cur;
+
+            if (il == n_layer - 1) {
+                // skip computing output for unused tokens
+                ggml_tensor * inp_out_ids = build_inp_out_ids();
+                cur                       = ggml_get_rows(ctx0, cur, inp_out_ids);
+                ffn_inp                   = ggml_get_rows(ctx0, ffn_inp, inp_out_ids);
+            }
+
+            // feed-forward network
+            {
+                cur = build_ffn(cur, layer.ffn_up, layer.ffn_up_b, NULL, NULL, NULL, NULL, layer.ffn_down, layer.ffn_down_b,
+                                NULL, NULL, LLM_FFN_GELU, LLM_FFN_SEQ, il);
+                cb(cur, "docfusion_dec_ffn_out", il);
+            }
+
+            cur = ggml_add(ctx0, cur, ffn_inp);
+            cb(cur, "docfusion_dec_ffn_res", il);
+
+            cur = build_norm(cur, layer.ffn_norm, layer.ffn_norm_b, LLM_NORM, il);
+            cb(cur, "docfusion_dec_ffn_norm", il);
+
+            cur = build_cvec(cur, il);
+            cb(cur, "docfusion_dec_l_out", il);
+
+            // input for next layer
+            inpL = cur;
+        }
+
+        cur = inpL;
+        cb(cur, "docfusion_dec_result_embd", -1);
+        res->t_embd = cur;
+
+        // lm_head
+        cur = build_lora_mm(model.output, cur);
+
+        cb(cur, "docfusion_dec_result_output", -1);
+        res->t_logits = cur;
+
+        ggml_build_forward_expand(gf, cur);
+    }
+};
+
 struct llm_build_jais : public llm_graph_context {
     llm_build_jais(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) : llm_graph_context(params) {
         const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -13635,6 +13902,20 @@ llm_graph_result_ptr llama_model::build_graph(
                 llm = std::make_unique<llm_build_t5_enc>(*this, params, gf);
             }
             break;
+        case LLM_ARCH_DOCFUSION:
+            {
+                switch (type) {
+                    case LLM_GRAPH_TYPE_ENCODER:
+                        llm = std::make_unique<llm_build_docfusion_enc>(*this, params, gf);
+                        break;
+                    case LLM_GRAPH_TYPE_DEFAULT:
+                    case LLM_GRAPH_TYPE_DECODER:
+                        llm = std::make_unique<llm_build_docfusion_dec>(*this, params, gf);
+                        break;
+                    default:
+                        GGML_ABORT("invalid graph type");
+                };
+            } break;
         case LLM_ARCH_JAIS:
             {
                 llm = std::make_unique<llm_build_jais>(*this, params, gf);
@@ -13792,6 +14073,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_JINA_BERT_V2:
         case LLM_ARCH_T5:
         case LLM_ARCH_T5ENCODER:
+        case LLM_ARCH_DOCFUSION:
         case LLM_ARCH_JAIS:
         case LLM_ARCH_RWKV6:
         case LLM_ARCH_RWKV6QWEN2:
@@ -13946,6 +14228,7 @@ bool llama_model_has_encoder(const llama_model * model) {
     switch (model->arch) {
         case LLM_ARCH_T5:        return true;
         case LLM_ARCH_T5ENCODER: return true;
+        case LLM_ARCH_DOCFUSION: return true;
         default:                 return false;
     }
 }

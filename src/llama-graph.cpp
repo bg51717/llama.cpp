@@ -278,6 +278,14 @@ void llm_graph_input_cross_embd::set_input(const llama_ubatch * ubatch) {
 
 void llm_graph_input_attn_no_cache::set_input(const llama_ubatch * ubatch) {
     if (kq_mask) {
+        if (kq_mask->buffer == nullptr) {
+            // Encoder-decoder models can run encoder graphs without a materialized KQ mask buffer.
+            if (hparams.dec_start_token_id != LLAMA_TOKEN_NULL) {
+                return;
+            }
+            GGML_ABORT("kq_mask buffer is null in non-enc-dec model");
+        }
+
         if (cparams.causal_attn) {
             const int64_t n_kv         = ubatch->n_tokens;
             const int64_t n_tokens     = ubatch->n_tokens;

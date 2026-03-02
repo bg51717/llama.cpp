@@ -838,9 +838,57 @@ int llama_context::encode(llama_batch & inp_batch) {
     ggml_backend_sched_reset(sched.get());
 
     // TODO: hacky solution
-    if (model.arch == LLM_ARCH_T5 && t_embd) {
-        //cross.t_embd = t_embd;
+    if (model.arch == LLM_ARCH_DOCFUSION && t_embd) {
+        synchronize();
 
+        const int32_t n_embd_out = t_embd->ne[0];
+        int32_t pos_min = 0;
+        int32_t pos_max = n_tokens - 1;
+
+        if (batch.pos && n_tokens > 0) {
+            pos_min = batch.pos[0];
+            pos_max = batch.pos[0];
+            for (int32_t i = 1; i < n_tokens; ++i) {
+                pos_min = std::min(pos_min, (int32_t) batch.pos[i]);
+                pos_max = std::max(pos_max, (int32_t) batch.pos[i]);
+            }
+        }
+
+        // For chunked encoder calls, keep previous cross memory and place rows by absolute pos.
+        // Reset on a fresh stream (pos starts at 0) or embedding-size mismatch.
+        if (pos_min <= 0 || cross.n_embd != n_embd_out) {
+            cross.v_embd.clear();
+            cross.seq_ids_enc.clear();
+            cross.n_enc = 0;
+        }
+
+        cross.n_embd = n_embd_out;
+
+        const int32_t n_enc_required = std::max(0, pos_max + 1);
+        if (n_enc_required > cross.n_enc) {
+            cross.v_embd.resize((size_t) cross.n_embd * n_enc_required);
+            cross.seq_ids_enc.resize(n_enc_required);
+            cross.n_enc = n_enc_required;
+        }
+
+        for (int32_t i = 0; i < n_tokens; ++i) {
+            const int32_t pos_i = batch.pos ? (int32_t) batch.pos[i] : i;
+            if (pos_i < 0 || pos_i >= cross.n_enc) {
+                continue;
+            }
+
+            memcpy(
+                cross.v_embd.data() + (size_t) pos_i * cross.n_embd,
+                embd + (size_t) i * cross.n_embd,
+                sizeof(float) * cross.n_embd);
+
+            auto & seq_ids = cross.seq_ids_enc[pos_i];
+            seq_ids.clear();
+            for (int s = 0; s < ubatch.n_seq_id[i]; s++) {
+                seq_ids.insert(ubatch.seq_id[i][s]);
+            }
+        }
+    } else if (model.arch == LLM_ARCH_T5 && t_embd) {
         synchronize();
 
         cross.n_embd = t_embd->ne[0];
@@ -1220,7 +1268,7 @@ int32_t llama_context::output_reserve(int32_t n_outputs) {
     bool has_embd   =  cparams.embeddings && (cparams.pooling_type == LLAMA_POOLING_TYPE_NONE);
 
     // TODO: hacky enc-dec support
-    if (model.arch == LLM_ARCH_T5) {
+    if (model.arch == LLM_ARCH_T5 || model.arch == LLM_ARCH_DOCFUSION) {
         has_logits = true;
         has_embd   = true;
     }
