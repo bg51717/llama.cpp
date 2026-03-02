@@ -57,6 +57,19 @@ MTMD_API int32_t mtmd_helper_eval_chunks(mtmd_context * ctx,
                                          bool logits_last,
                                          llama_pos * new_n_past);
 
+// DocFusion-only helper:
+// runs encoder path (llama_encode) for image embeddings + text tokens,
+// preparing cross-memory for decoder generation.
+// decoder n_past is not advanced by this call.
+MTMD_API int32_t mtmd_helper_eval_chunks_docfusion(mtmd_context * ctx,
+                                                   struct llama_context * lctx,
+                                                   const mtmd_input_chunks * chunks,
+                                                   llama_pos n_past,
+                                                   llama_seq_id seq_id,
+                                                   int32_t n_batch,
+                                                   bool logits_last,
+                                                   llama_pos * new_n_past);
+
 // works like mtmd_helper_eval_chunks(), but only for a single chunk
 // this function is NOT thread-safe
 MTMD_API int32_t mtmd_helper_eval_chunk_single(mtmd_context * ctx,

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstring>
 #include <vector>
 
 //#define MTMD_AUDIO_DEBUG
@@ -341,6 +342,167 @@ int32_t mtmd_helper_eval_chunks(mtmd_context * ctx,
         *new_n_past = n_past;
     }
 
+    return 0;
+}
+
+namespace {
+
+struct docfusion_accumulator {
+    std::vector<llama_token> txt_tokens;
+    std::vector<float> img_embs;
+    int t_img = 0;
+    int d_img = 0;
+};
+
+static int32_t mtmd_helper_collect_chunk_docfusion(
+        mtmd_context * ctx,
+        struct llama_context * lctx,
+        const mtmd_input_chunk * chunk,
+        docfusion_accumulator & acc) {
+    const auto chunk_type = mtmd_input_chunk_get_type(chunk);
+    if (chunk_type == MTMD_INPUT_CHUNK_TYPE_TEXT) {
+        size_t n_tokens = 0;
+        const llama_token * tokens = mtmd_input_chunk_get_tokens_text(chunk, &n_tokens);
+        if (tokens && n_tokens > 0) {
+            acc.txt_tokens.insert(acc.txt_tokens.end(), tokens, tokens + n_tokens);
+        }
+        return 0;
+    }
+
+    if (chunk_type != MTMD_INPUT_CHUNK_TYPE_IMAGE) {
+        LOG_ERR("DocFusion does not support audio chunks in encoder path\n");
+        return -4;
+    }
+
+    const int32_t ret = mtmd_encode_chunk(ctx, chunk);
+    if (ret != 0) {
+        LOG_ERR("failed to encode image chunk\n");
+        return ret;
+    }
+
+    float * embd = mtmd_get_output_embd(ctx);
+    const int n_tokens = (int) mtmd_input_chunk_get_n_tokens(chunk);
+    const int d = llama_model_n_embd(llama_get_model(lctx));
+    if (acc.d_img != 0 && acc.d_img != d) {
+        LOG_ERR("image embedding dimension mismatch: %d vs %d\n", acc.d_img, d);
+        return -3;
+    }
+
+    acc.d_img = d;
+    acc.t_img += n_tokens;
+    acc.img_embs.insert(acc.img_embs.end(), embd, embd + (size_t) n_tokens * d);
+    return 0;
+}
+
+} // namespace
+
+int32_t mtmd_helper_eval_chunks_docfusion(
+        mtmd_context * ctx,
+        struct llama_context * lctx,
+        const mtmd_input_chunks * chunks,
+        llama_pos n_past,
+        llama_seq_id seq_id,
+        int32_t n_batch,
+        bool /*logits_last*/,
+        llama_pos * new_n_past) {
+    docfusion_accumulator acc;
+
+    const size_t n_chunks = mtmd_input_chunks_size(chunks);
+    if (n_chunks == 0) {
+        if (new_n_past) {
+            *new_n_past = n_past;
+        }
+        return 0;
+    }
+
+    for (size_t i = 0; i < n_chunks; ++i) {
+        const auto chunk = mtmd_input_chunks_get(chunks, i);
+        const int32_t rc = mtmd_helper_collect_chunk_docfusion(ctx, lctx, chunk, acc);
+        if (rc != 0) {
+            LOG_ERR("failed to process chunk %zu (rc=%d)\n", i, rc);
+            if (new_n_past) {
+                *new_n_past = n_past;
+            }
+            return rc;
+        }
+    }
+
+    const llama_model * model = llama_get_model(lctx);
+    const int d_model = llama_model_n_embd(model);
+    if (acc.d_img != 0 && acc.d_img != d_model) {
+        LOG_ERR("image embedding dimension does not match model (%d vs %d)\n", acc.d_img, d_model);
+        if (new_n_past) {
+            *new_n_past = n_past;
+        }
+        return -2;
+    }
+
+    const int ubatch = llama_n_ubatch(lctx);
+    const int chunk_size = std::max(1, ubatch > 0 ? ubatch : n_batch);
+    int32_t rc = 0;
+    int pos = 0;
+
+    if (acc.t_img > 0) {
+        int off = 0;
+        while (off < acc.t_img) {
+            const int cur = std::min(chunk_size, acc.t_img - off);
+            llama_batch b_img = llama_batch_init(cur, d_model, 1);
+            b_img.n_tokens = cur;
+            std::memcpy(
+                b_img.embd,
+                acc.img_embs.data() + (size_t) off * d_model,
+                sizeof(float) * (size_t) cur * d_model);
+
+            for (int i = 0; i < cur; ++i) {
+                b_img.pos[i]       = pos++;
+                b_img.n_seq_id[i]  = 1;
+                b_img.seq_id[i][0] = seq_id;
+                b_img.logits[i]    = false;
+            }
+
+            rc = llama_encode(lctx, b_img);
+            llama_batch_free(b_img);
+            if (rc != 0) {
+                if (new_n_past) {
+                    *new_n_past = n_past;
+                }
+                return rc;
+            }
+            off += cur;
+        }
+    }
+
+    if (!acc.txt_tokens.empty()) {
+        const int t_txt = (int) acc.txt_tokens.size();
+        int off = 0;
+        while (off < t_txt) {
+            const int cur = std::min(chunk_size, t_txt - off);
+            llama_batch b_txt = llama_batch_init(cur, 0, 1);
+            b_txt.n_tokens = cur;
+
+            for (int i = 0; i < cur; ++i) {
+                b_txt.token[i]      = acc.txt_tokens[off + i];
+                b_txt.pos[i]        = pos++;
+                b_txt.n_seq_id[i]   = 1;
+                b_txt.seq_id[i][0]  = seq_id;
+                b_txt.logits[i]     = false;
+            }
+
+            rc = llama_encode(lctx, b_txt);
+            llama_batch_free(b_txt);
+            if (rc != 0) {
+                if (new_n_past) {
+                    *new_n_past = n_past;
+                }
+                return rc;
+            }
+            off += cur;
+        }
+    }
+
+    if (new_n_past) {
+        *new_n_past = n_past;
+    }
     return 0;
 }
 

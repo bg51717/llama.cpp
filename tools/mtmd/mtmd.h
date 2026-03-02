@@ -108,6 +108,9 @@ MTMD_API bool mtmd_support_vision(mtmd_context * ctx);
 // whether the current model supports audio input
 MTMD_API bool mtmd_support_audio(mtmd_context * ctx);
 
+// whether the current projector pipeline is DocFusion
+MTMD_API bool mtmd_is_docfusion(mtmd_context * ctx);
+
 // get audio bitrate in Hz, for example 16000 for Whisper
 // return -1 if audio is not supported
 MTMD_API int mtmd_get_audio_bitrate(mtmd_context * ctx);

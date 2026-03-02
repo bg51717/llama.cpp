@@ -245,6 +245,90 @@ static int eval_message(mtmd_cli_context & ctx, common_chat_msg & msg, bool add_
     return 0;
 }
 
+static int docfusion_prefill_decoder_from_bos(struct llama_context * lctx, llama_pos * n_past) {
+    const llama_model * model = llama_get_model(lctx);
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+
+    llama_token tok0 = llama_model_decoder_start_token(model);
+    if (tok0 == LLAMA_TOKEN_NULL) {
+        tok0 = llama_vocab_bos(vocab);
+    }
+    if (tok0 == LLAMA_TOKEN_NULL) {
+        tok0 = llama_vocab_eos(vocab);
+    }
+    if (tok0 < 0) {
+        LOG_ERR("no decoder start token available\n");
+        return -1;
+    }
+
+    llama_batch b0 = llama_batch_init(1, 0, 1);
+    b0.n_tokens     = 1;
+    b0.token[0]     = tok0;
+    b0.pos[0]       = (*n_past)++;
+    b0.n_seq_id[0]  = 1;
+    b0.seq_id[0][0] = 0;
+    b0.logits[0]    = true;
+
+    const int rc = llama_decode(lctx, b0);
+    llama_batch_free(b0);
+    if (rc != 0) {
+        LOG_ERR("decoder BOS prefill failed (%d)\n", rc);
+    }
+    return rc;
+}
+
+static int eval_message_docfusion(mtmd_cli_context & ctx, common_chat_msg & msg, bool add_bos = false) {
+    mtmd_input_text text;
+    text.text          = msg.content.c_str();
+    text.add_special   = add_bos;
+    text.parse_special = true;
+
+    if (g_is_interrupted) {
+        return 0;
+    }
+
+    mtmd::input_chunks chunks(mtmd_input_chunks_init());
+    auto bitmaps_c_ptr = ctx.bitmaps.c_ptr();
+    int32_t res = mtmd_tokenize(
+        ctx.ctx_vision.get(),
+        chunks.ptr.get(),
+        &text,
+        bitmaps_c_ptr.data(),
+        bitmaps_c_ptr.size());
+    if (res != 0) {
+        LOG_ERR("Unable to tokenize prompt, res = %d\n", res);
+        return 1;
+    }
+
+    ctx.bitmaps.entries.clear();
+
+    // Start a fresh decoder sequence; encoder pass will populate cross-memory.
+    llama_kv_self_clear(ctx.lctx);
+    ctx.n_past = 0;
+
+    llama_pos new_n_past = 0;
+    if (mtmd_helper_eval_chunks_docfusion(
+            ctx.ctx_vision.get(),
+            ctx.lctx,
+            chunks.ptr.get(),
+            0,
+            0,
+            ctx.n_batch,
+            false,
+            &new_n_past)) {
+        LOG_ERR("Unable to run DocFusion encoder\n");
+        return 1;
+    }
+
+    ctx.n_past = new_n_past;
+    if (docfusion_prefill_decoder_from_bos(ctx.lctx, &ctx.n_past) != 0) {
+        return 1;
+    }
+
+    LOG("\n");
+    return 0;
+}
+
 int main(int argc, char ** argv) {
     ggml_time_init();
 
@@ -262,9 +346,12 @@ int main(int argc, char ** argv) {
         LOG_ERR("ERR: Missing --mmproj argument\n");
         return 1;
     }
+    // Avoid warmup encode/decode before multimodal state (especially for enc-dec models like DocFusion).
+    params.warmup = false;
 
     mtmd_cli_context ctx(params);
     LOG("%s: loading model: %s\n", __func__, params.model.path.c_str());
+    const bool use_docfusion = mtmd_is_docfusion(ctx.ctx_vision.get());
 
     bool is_single_turn = !params.prompt.empty() && !params.image.empty();
 
@@ -291,8 +378,12 @@ int main(int argc, char ** argv) {
     if (is_single_turn) {
         g_is_generating = true;
         if (params.prompt.find(mtmd_default_marker()) == std::string::npos) {
-            for (size_t i = 0; i < params.image.size(); i++) {
+            if (use_docfusion) {
                 params.prompt += mtmd_default_marker();
+            } else {
+                for (size_t i = 0; i < params.image.size(); i++) {
+                    params.prompt += mtmd_default_marker();
+                }
             }
         }
         common_chat_msg msg;
@@ -303,7 +394,8 @@ int main(int argc, char ** argv) {
                 return 1; // error is already printed by libmtmd
             }
         }
-        if (eval_message(ctx, msg, true)) {
+        int ret = use_docfusion ? eval_message_docfusion(ctx, msg, true) : eval_message(ctx, msg, true);
+        if (ret) {
             return 1;
         }
         if (!g_is_interrupted && generate_response(ctx, n_predict)) {
@@ -367,7 +459,8 @@ int main(int argc, char ** argv) {
             common_chat_msg msg;
             msg.role = "user";
             msg.content = content;
-            int ret = eval_message(ctx, msg, is_first_msg);
+            int ret = use_docfusion ? eval_message_docfusion(ctx, msg, is_first_msg)
+                                    : eval_message(ctx, msg, is_first_msg);
             if (ret) {
                 return 1;
             }

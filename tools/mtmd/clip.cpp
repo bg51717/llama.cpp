@@ -4324,6 +4324,47 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
                 int y_patch = img->ny / patch_size + (int)(img->ny % patch_size > 0);
                 n_patches_sq = x_patch * y_patch;
             } break;
+        case PROJECTOR_TYPE_DOCFUSION:
+            {
+                const auto & dv = ctx->model.hparams.davit_hparams;
+                auto conv_out_1d = [](int in, int k, int s, int p) -> int {
+                    return (in + 2 * p - (k - 1) - 1) / s + 1;
+                };
+
+                int H = img ? img->ny : params.image_size;
+                int W = img ? img->nx : params.image_size;
+
+                const int n_stages = (int) dv.patch_stride.size();
+                GGML_ASSERT((int) dv.patch_size.size() == n_stages);
+                GGML_ASSERT((int) dv.patch_padding.size() == n_stages);
+                for (int i = 0; i < n_stages; ++i) {
+                    H = conv_out_1d(H, dv.patch_size[i], dv.patch_stride[i], dv.patch_padding[i]);
+                    W = conv_out_1d(W, dv.patch_size[i], dv.patch_stride[i], dv.patch_padding[i]);
+                }
+
+                const int n_spatial = H * W;
+                int n = 0;
+
+                const std::string & src = dv.image_feature_source;
+                const bool want_last = src.find("last_frame") != std::string::npos;
+                const bool want_tavg = src.find("temporal_avg_pool") != std::string::npos;
+                const bool want_savg = src.find("spatial_avg_pool") != std::string::npos;
+
+                if (want_savg) {
+                    n += 1;
+                }
+                if (want_last) {
+                    n += n_spatial;
+                }
+                if (want_tavg) {
+                    n += n_spatial;
+                }
+                if (n == 0) {
+                    n = n_spatial;
+                }
+
+                n_patches_sq = n;
+            } break;
         case PROJECTOR_TYPE_GEMMA3:
             {
                 int n_per_side = params.image_size / params.patch_size;
@@ -4763,6 +4804,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         case PROJECTOR_TYPE_GEMMA3:
         case PROJECTOR_TYPE_IDEFICS3:
         case PROJECTOR_TYPE_INTERNVL:
+        case PROJECTOR_TYPE_DOCFUSION:
         case PROJECTOR_TYPE_QWEN2A:
         case PROJECTOR_TYPE_ULTRAVOX:
             {
@@ -4860,6 +4902,10 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_QWEN2VL:
         case PROJECTOR_TYPE_QWEN25VL:
             return ctx->model.mm_1_b->ne[0];
+        case PROJECTOR_TYPE_DOCFUSION:
+            GGML_ASSERT(ctx->model.image_proj_norm_w != nullptr &&
+                        "DocFusion: image_proj_norm_w is null");
+            return ctx->model.image_proj_norm_w->ne[0];
         case PROJECTOR_TYPE_GEMMA3:
             return ctx->model.mm_input_proj_w->ne[0];
         case PROJECTOR_TYPE_IDEFICS3:

@@ -731,6 +731,87 @@ int32_t mtmd_tokenize(mtmd_context * ctx,
             const mtmd_input_text * text,
             const mtmd_bitmap ** bitmaps,
             size_t n_bitmaps) {
+    // DocFusion encoder consumes image embeddings + text tokens directly.
+    // Keep this in a dedicated path so other model families stay untouched.
+    if (ctx->ctx_v && clip_get_projector_type(ctx->ctx_v) == PROJECTOR_TYPE_DOCFUSION) {
+        output->entries.clear();
+        output->entries.reserve(2);
+
+        if (n_bitmaps != 1 || bitmaps[0] == nullptr || bitmaps[0]->is_audio) {
+            LOG_ERR("%s: DocFusion expects exactly 1 image input\n", __func__);
+            return 1;
+        }
+
+        clip_image_u8_ptr img_u8(clip_image_u8_init());
+        img_u8->nx = bitmaps[0]->nx;
+        img_u8->ny = bitmaps[0]->ny;
+        img_u8->buf.resize(bitmaps[0]->data.size());
+        std::memcpy(img_u8->buf.data(), bitmaps[0]->data.data(), img_u8->nx * img_u8->ny * 3);
+
+        clip_image_f32_batch batch_f32;
+        if (!clip_image_preprocess(ctx->ctx_v, img_u8.get(), &batch_f32) || batch_f32.entries.empty()) {
+            LOG_ERR("%s: unable to preprocess image\n", __func__);
+            return 2;
+        }
+
+        size_t n_img_tokens = 0;
+        for (const auto & entry : batch_f32.entries) {
+            n_img_tokens += clip_n_output_tokens(ctx->ctx_v, entry.get());
+        }
+
+        const auto vocab = llama_model_get_vocab(ctx->text_model);
+        std::string text_for_tok = text->text ? text->text : "";
+        string_replace_all(text_for_tok, ctx->media_marker, "");
+        string_replace_all(text_for_tok, MTMD_DEFAULT_IMAGE_MARKER, "");
+
+        std::vector<llama_token> toks = mtmd_tokenizer::mtmd_tokenize_text_internal(
+            vocab,
+            text_for_tok,
+            false,
+            text->parse_special);
+
+        const llama_token tok_bos = llama_vocab_bos(vocab);
+        const llama_token tok_eos = llama_vocab_eos(vocab);
+        if (text->add_special && tok_bos != LLAMA_TOKEN_NULL) {
+            if (toks.empty() || toks.front() != tok_bos) {
+                toks.insert(toks.begin(), tok_bos);
+            }
+        }
+        if (tok_eos != LLAMA_TOKEN_NULL) {
+            if (toks.empty() || toks.back() != tok_eos) {
+                toks.push_back(tok_eos);
+            }
+        }
+        if (toks.empty() && tok_bos != LLAMA_TOKEN_NULL) {
+            toks.push_back(tok_bos);
+        }
+
+        mtmd_image_tokens_ptr image_tokens(new mtmd_image_tokens);
+        image_tokens->nx            = (uint32_t) n_img_tokens;
+        image_tokens->ny            = 1;
+        image_tokens->use_mrope_pos = false;
+        image_tokens->batch_f32     = std::move(batch_f32);
+        image_tokens->id            = bitmaps[0]->id;
+
+        mtmd_input_chunk img_chunk{
+            MTMD_INPUT_CHUNK_TYPE_IMAGE,
+            {},
+            std::move(image_tokens),
+            nullptr,
+        };
+        output->entries.emplace_back(std::move(img_chunk));
+
+        mtmd_input_chunk txt_chunk{
+            MTMD_INPUT_CHUNK_TYPE_TEXT,
+            std::move(toks),
+            nullptr,
+            nullptr,
+        };
+        output->entries.emplace_back(std::move(txt_chunk));
+
+        return 0;
+    }
+
     mtmd_tokenizer tokenizer(ctx, text, bitmaps, n_bitmaps);
     return tokenizer.tokenize(output);
 }
@@ -817,6 +898,10 @@ bool mtmd_support_vision(mtmd_context * ctx) {
 
 bool mtmd_support_audio(mtmd_context * ctx) {
     return ctx->ctx_a != nullptr;
+}
+
+bool mtmd_is_docfusion(mtmd_context * ctx) {
+    return ctx->ctx_v && clip_get_projector_type(ctx->ctx_v) == PROJECTOR_TYPE_DOCFUSION;
 }
 
 int mtmd_get_audio_bitrate(mtmd_context * ctx) {
