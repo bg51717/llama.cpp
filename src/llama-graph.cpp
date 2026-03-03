@@ -634,7 +634,13 @@ ggml_tensor * llm_graph_context::build_ffn(
             } break;
         case LLM_FFN_GELU:
             {
-                cur = ggml_gelu(ctx0, cur);
+                // DocFusion HF implementation uses exact GELU (erf form).
+                // Keep default path unchanged for other architectures.
+                if (arch == LLM_ARCH_DOCFUSION) {
+                    cur = ggml_gelu_erf(ctx0, cur);
+                } else {
+                    cur = ggml_gelu(ctx0, cur);
+                }
                 cb(cur, "ffn_gelu", il);
                 if (act_scales != NULL) {
                     cur = ggml_div(ctx0, cur, act_scales);

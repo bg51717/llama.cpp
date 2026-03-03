@@ -162,6 +162,9 @@ struct mtmd_cli_context {
 
 static int generate_response(mtmd_cli_context & ctx, int n_predict) {
     llama_tokens generated_tokens;
+    const bool stop_on_docfusion_eos = mtmd_is_docfusion(ctx.ctx_vision.get());
+    const llama_token eos_token_id = llama_vocab_eos(ctx.vocab);
+
     for (int i = 0; i < n_predict; i++) {
         if (i > n_predict || !g_is_generating || g_is_interrupted) {
             LOG("\n");
@@ -172,7 +175,8 @@ static int generate_response(mtmd_cli_context & ctx, int n_predict) {
         generated_tokens.push_back(token_id);
         common_sampler_accept(ctx.smpl, token_id, true);
 
-        if (llama_vocab_is_eog(ctx.vocab, token_id) || ctx.check_antiprompt(generated_tokens)) {
+        const bool is_docfusion_eos = stop_on_docfusion_eos && eos_token_id >= 0 && token_id == eos_token_id;
+        if (llama_vocab_is_eog(ctx.vocab, token_id) || is_docfusion_eos || ctx.check_antiprompt(generated_tokens)) {
             LOG("\n");
             break; // end of generation
         }

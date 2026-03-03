@@ -1436,7 +1436,7 @@ struct clip_graph {
                 inpL = ggml_concat(ctx0, inpL, current, 1);  
             }
 
-            inpL = ggml_mul_mat(ctx0, model.image_proj, inpL);
+            inpL = ggml_mul_mat(ctx0, model.projection, inpL);
             inpL = build_norm(inpL, model.image_proj_norm_w, model.image_proj_norm_b, norm_t, eps, -1);
 
             inpL = ggml_cont(ctx0, inpL);
@@ -3242,7 +3242,8 @@ struct clip_model_loader {
                     const int num_stages = (int) dv.dim_embed.size();
 
                     model.layers.clear();
-                    model.image_proj = get_tensor(TN_MM_INP_PROJ, false);
+                    model.projection = get_tensor(TN_MM_INP_PROJ, false);
+                    model.image_proj = model.projection;
                     model.image_proj_norm_w = get_tensor(string_format(TN_OUT_PROJ, "weight"));
                     model.image_proj_norm_b = get_tensor(string_format(TN_OUT_PROJ, "bias"));
 
@@ -3720,6 +3721,92 @@ struct image_manipulation {
         return true;
     }
 
+    // DocFusion wants a resize path much closer to HF/PyTorch behavior
+    // (half-pixel coordinate transform + cubic coefficient a = -0.75 + antialias for downsampling).
+    static bool bicubic_resize_torch_like(const clip_image_u8 & img, clip_image_u8 & dst, int target_width, int target_height) {
+        const int src_w = img.nx;
+        const int src_h = img.ny;
+
+        dst.nx = target_width;
+        dst.ny = target_height;
+        dst.buf.resize(3 * target_width * target_height);
+
+        const float inv_scale_x = (float) src_w / (float) target_width;
+        const float inv_scale_y = (float) src_h / (float) target_height;
+        const float scale_x = (float) target_width / (float) src_w;
+        const float scale_y = (float) target_height / (float) src_h;
+        auto cubic = [](float x, float a) -> float {
+            x = fabsf(x);
+            if (x <= 1.0f) {
+                return (a + 2.0f) * x * x * x - (a + 3.0f) * x * x + 1.0f;
+            }
+            if (x < 2.0f) {
+                return a * x * x * x - 5.0f * a * x * x + 8.0f * a * x - 4.0f * a;
+            }
+            return 0.0f;
+        };
+
+        using contrib_t = std::pair<int, float>;
+        auto precompute = [&](int src_size, int dst_size, float scale, float inv_scale) {
+            std::vector<std::vector<contrib_t>> table(dst_size);
+
+            const bool antialias = scale < 1.0f;
+            const float cubic_a = -0.75f;
+            const float support = antialias ? (2.0f / scale) : 2.0f;
+
+            for (int i = 0; i < dst_size; ++i) {
+                const float center = (i + 0.5f) * inv_scale - 0.5f;
+
+                const int left = (int) floorf(center - support + 1.0f);
+                const int right = (int) floorf(center + support);
+
+                float wsum = 0.0f;
+                auto & row = table[i];
+                row.reserve((size_t) (right - left + 1));
+
+                for (int j = left; j <= right; ++j) {
+                    float x = center - (float) j;
+                    float w = antialias ? (scale * cubic(scale * x, cubic_a)) : cubic(x, cubic_a);
+                    if (w == 0.0f) {
+                        continue;
+                    }
+                    row.emplace_back(clip(j, 0, src_size - 1), w);
+                    wsum += w;
+                }
+
+                if (wsum != 0.0f) {
+                    for (auto & item : row) {
+                        item.second /= wsum;
+                    }
+                }
+            }
+
+            return table;
+        };
+
+        const auto wx = precompute(src_w, target_width, scale_x, inv_scale_x);
+        const auto wy = precompute(src_h, target_height, scale_y, inv_scale_y);
+
+        for (int y = 0; y < target_height; ++y) {
+            for (int x = 0; x < target_width; ++x) {
+                for (int c = 0; c < 3; ++c) {
+                    float sum = 0.0f;
+                    for (const auto & row_y : wy[y]) {
+                        for (const auto & row_x : wx[x]) {
+                            const float w = row_y.second * row_x.second;
+                            const int src_idx = 3 * (row_y.first * src_w + row_x.first) + c;
+                            sum += w * (float) img.buf[src_idx];
+                        }
+                    }
+                    const uint8_t out = (uint8_t) std::min(std::max((int) std::lround(sum), 0), 255);
+                    dst.buf[3 * (y * target_width + x) + c] = out;
+                }
+            }
+        }
+
+        return true;
+    }
+
     // llava-1.6 type of resize_and_pad
     // if the ratio is not 1:1, padding with pad_color will be applied
     // pad_color is single channel, default is 0 (black)
@@ -4125,6 +4212,61 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         // clip_image_f32_ptr res(clip_image_f32_init());
         normalize_image_u8_to_f32(resized, *img_f32, params.image_mean, params.image_std);
         // res_imgs->data[0] = *res;
+        res_imgs->entries.push_back(std::move(img_f32));
+        return true;
+    } else if (ctx->proj_type() == PROJECTOR_TYPE_DOCFUSION) {
+        const auto & process_config = params.davit_hparams.preprocess;
+
+        clip_image_u8 processed = *img;
+        clip_image_u8 tmp;
+
+        if (process_config.do_resize) {
+            int target_w = params.image_size;
+            int target_h = params.image_size;
+            auto it_w = process_config.size.find("width");
+            auto it_h = process_config.size.find("height");
+            if (it_w != process_config.size.end()) {
+                target_w = it_w->second;
+            }
+            if (it_h != process_config.size.end()) {
+                target_h = it_h->second;
+            }
+
+            tmp = processed;
+            image_manipulation::bicubic_resize_torch_like(tmp, processed, target_w, target_h);
+        }
+
+        if (process_config.do_center_crop) {
+            int crop_w = processed.nx;
+            int crop_h = processed.ny;
+            auto it_w = process_config.crop_size.find("width");
+            auto it_h = process_config.crop_size.find("height");
+            if (it_w != process_config.crop_size.end()) {
+                crop_w = it_w->second;
+            }
+            if (it_h != process_config.crop_size.end()) {
+                crop_h = it_h->second;
+            }
+            const int x = (processed.nx - crop_w) / 2;
+            const int y = (processed.ny - crop_h) / 2;
+
+            tmp = processed;
+            image_manipulation::crop_image(tmp, processed, x, y, crop_w, crop_h);
+        }
+
+        float mean[3] = { params.image_mean[0], params.image_mean[1], params.image_mean[2] };
+        float std [3] = { params.image_std[0],  params.image_std[1],  params.image_std[2]  };
+        if (process_config.image_mean.size() >= 3 && process_config.image_std.size() >= 3) {
+            mean[0] = process_config.image_mean[0];
+            mean[1] = process_config.image_mean[1];
+            mean[2] = process_config.image_mean[2];
+            std [0] = process_config.image_std[0];
+            std [1] = process_config.image_std[1];
+            std [2] = process_config.image_std[2];
+        }
+
+        clip_image_f32_ptr img_f32(clip_image_f32_init());
+        normalize_image_u8_to_f32(processed, *img_f32, mean, std);
         res_imgs->entries.push_back(std::move(img_f32));
         return true;
     }

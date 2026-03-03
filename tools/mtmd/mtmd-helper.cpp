@@ -391,6 +391,7 @@ static int32_t mtmd_helper_collect_chunk_docfusion(
     acc.d_img = d;
     acc.t_img += n_tokens;
     acc.img_embs.insert(acc.img_embs.end(), embd, embd + (size_t) n_tokens * d);
+
     return 0;
 }
 
