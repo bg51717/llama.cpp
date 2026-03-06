@@ -991,6 +991,86 @@ class GGUFWriter:
     def add_vision_n_wa_pattern(self, value: int) -> None:
         self.add_uint32(Keys.ClipVision.N_WA_PATTERN, value)
 
+    def add_DavitVision(self, value: Mapping[str, Any], processer_config: Mapping[str, Any]) -> None:
+        # Vision parameters
+        if "drop_path_rate" in value:
+            self.add_float32(Keys.DavitVision.DROP_PATH_RATE.format(), float(value["drop_path_rate"]))
+        if "patch_size" in value:
+            self.add_array(Keys.DavitVision.PATCH_SIZE.format(), value["patch_size"])
+        if "patch_stride" in value:
+            self.add_array(Keys.DavitVision.PATCH_STRIDE.format(), value["patch_stride"])
+        if "patch_padding" in value:
+            self.add_array(Keys.DavitVision.PATCH_PADDING.format(), value["patch_padding"])
+        if "patch_prenorm" in value:
+            self.add_array(Keys.DavitVision.PATCH_PRENORM.format(), [int(x) for x in value["patch_prenorm"]])
+        if "enable_checkpoint" in value:
+            self.add_bool(Keys.DavitVision.ENABLE_CHECKPOINT.format(), bool(value["enable_checkpoint"]))
+        if "dim_embed" in value:
+            self.add_array(Keys.DavitVision.DIM_EMBED.format(), value["dim_embed"])
+        if "num_heads" in value:
+            self.add_array(Keys.DavitVision.NUM_HEADS.format(), value["num_heads"])
+        if "num_groups" in value:
+            self.add_array(Keys.DavitVision.NUM_GROUPS.format(), value["num_groups"])
+        if "depths" in value:
+            self.add_array(Keys.DavitVision.DEPTHS.format(), value["depths"])
+        if "window_size" in value:
+            self.add_uint32(Keys.DavitVision.WINDOW_SIZE.format(), int(value["window_size"]))
+        if "projection_dim" in value:
+            self.add_uint32(Keys.DavitVision.PROJECTION_DIM.format(), int(value["projection_dim"]))
+        if "image_feature_source" in value:
+            self.add_string(Keys.DavitVision.IMAGE_FEATURE_SOURCE.format(), ",".join(value["image_feature_source"]))
+        if "model_type" in value:
+            self.add_string(Keys.DavitVision.MODEL_TYPE.format(), str(value["model_type"]))
+
+        te = value.get("visual_temporal_embedding", None)
+        if isinstance(te, dict):
+            if "type" in te:
+                self.add_string(Keys.DavitVision.TemporalEmbedding.TYPE.format(), str(te["type"]))
+            if "max_temporal_embeddings" in te:
+                self.add_uint32(
+                    Keys.DavitVision.TemporalEmbedding.MAX_TEMPORAL_EMBEDDINGS.format(),
+                    int(te["max_temporal_embeddings"]),
+                )
+
+        pe = value.get("image_pos_embed", None)
+        if isinstance(pe, dict):
+            if "type" in pe:
+                self.add_string(Keys.DavitVision.ImagePosEmbed.TYPE.format(), str(pe["type"]))
+            if "max_pos_embeddings" in pe:
+                self.add_uint32(
+                    Keys.DavitVision.ImagePosEmbed.MAX_POS_EMBEDDINGS.format(),
+                    int(pe["max_pos_embeddings"]),
+                )
+
+        # Preprocess parameters
+        import json
+        if "do_convert_rgb" in processer_config:
+            self.add_bool(Keys.DavitVision.Preprocess.DO_CONVERT_RGB, processer_config["do_convert_rgb"])
+        if "do_normalize" in processer_config:
+            self.add_bool(Keys.DavitVision.Preprocess.DO_NORMALIZE, processer_config["do_normalize"])
+        if "do_rescale" in processer_config:
+            self.add_bool(Keys.DavitVision.Preprocess.DO_RESCALE, processer_config["do_rescale"])
+        if "do_resize" in processer_config:
+            self.add_bool(Keys.DavitVision.Preprocess.DO_RESIZE, processer_config["do_resize"])
+        if "do_center_crop" in processer_config:
+            self.add_bool(Keys.DavitVision.Preprocess.DO_CENTER_CROP, processer_config["do_center_crop"])
+        if "image_processor_type" in processer_config:
+            self.add_string(Keys.DavitVision.Preprocess.IMAGE_PROCESSOR_TYPE, processer_config["image_processor_type"])
+        if "image_seq_length" in processer_config:
+            self.add_uint32(Keys.DavitVision.Preprocess.IMAGE_SEQ_LENGTH, processer_config["image_seq_length"])
+        if "image_mean" in processer_config:
+            self.add_array(Keys.DavitVision.Preprocess.IMAGE_MEAN, processer_config["image_mean"])
+        if "image_std" in processer_config:
+            self.add_array(Keys.DavitVision.Preprocess.IMAGE_STD, processer_config["image_std"])
+        if "processor_class" in processer_config:
+            self.add_string(Keys.DavitVision.Preprocess.PROCESSOR_CLASS, processer_config["processor_class"])
+        if "resample" in processer_config:
+            self.add_uint32(Keys.DavitVision.Preprocess.RESAMPLE, processer_config["resample"])
+        if "size" in processer_config and isinstance(processer_config["size"], dict):
+            self.add_string(Keys.DavitVision.Preprocess.SIZE, json.dumps(processer_config["size"]))
+        if "crop_size" in processer_config and isinstance(processer_config["crop_size"], dict):
+            self.add_string(Keys.DavitVision.Preprocess.CROP_SIZE, json.dumps(processer_config["crop_size"]))
+
     # audio models
 
     def add_audio_projection_dim(self, value: int) -> None:

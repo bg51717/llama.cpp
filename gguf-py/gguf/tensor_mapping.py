@@ -31,6 +31,9 @@ class TensorNameMap:
             "model.embeddings",                          # rwkv7
             "model.word_embeddings",                     # bailingmoe
             "language_model.model.embed_tokens",         # llama4
+            "language_model.model.shared",               # Docfusion
+            "language_model.model.encoder.embed_tokens", # Docfusion
+            "language_model.model.decoder.embed_tokens", # Docfusion
         ),
 
         # Token type embeddings
@@ -69,6 +72,7 @@ class TensorNameMap:
             "head",                      # rwkv
             "head.out",                  # wavtokenizer
             "lm_head",                   # llama4
+            "language_model.lm_head",    # Docfusion
         ),
 
         # Output norm
@@ -718,22 +722,27 @@ class TensorNameMap:
 
         MODEL_TENSOR.DEC_ATTN_NORM: (
             "decoder.block.{bid}.layer.0.layer_norm", # t5
+            "language_model.model.decoder.layers.{bid}.self_attn_layer_norm", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_ATTN_Q: (
             "decoder.block.{bid}.layer.0.SelfAttention.q", # t5
+            "language_model.model.decoder.layers.{bid}.self_attn.q_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_ATTN_K: (
             "decoder.block.{bid}.layer.0.SelfAttention.k", # t5
+            "language_model.model.decoder.layers.{bid}.self_attn.k_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_ATTN_V: (
             "decoder.block.{bid}.layer.0.SelfAttention.v", # t5
+            "language_model.model.decoder.layers.{bid}.self_attn.v_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_ATTN_OUT: (
             "decoder.block.{bid}.layer.0.SelfAttention.o", # t5
+            "language_model.model.decoder.layers.{bid}.self_attn.out_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_ATTN_REL_B: (
@@ -742,22 +751,27 @@ class TensorNameMap:
 
         MODEL_TENSOR.DEC_CROSS_ATTN_NORM: (
             "decoder.block.{bid}.layer.1.layer_norm", # t5
+            "language_model.model.decoder.layers.{bid}.encoder_attn_layer_norm", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_CROSS_ATTN_Q: (
             "decoder.block.{bid}.layer.1.EncDecAttention.q", # t5
+            "language_model.model.decoder.layers.{bid}.encoder_attn.q_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_CROSS_ATTN_K: (
             "decoder.block.{bid}.layer.1.EncDecAttention.k", # t5
+            "language_model.model.decoder.layers.{bid}.encoder_attn.k_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_CROSS_ATTN_V: (
             "decoder.block.{bid}.layer.1.EncDecAttention.v", # t5
+            "language_model.model.decoder.layers.{bid}.encoder_attn.v_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_CROSS_ATTN_OUT: (
             "decoder.block.{bid}.layer.1.EncDecAttention.o", # t5
+            "language_model.model.decoder.layers.{bid}.encoder_attn.out_proj", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_CROSS_ATTN_REL_B: (
@@ -775,10 +789,12 @@ class TensorNameMap:
         MODEL_TENSOR.DEC_FFN_UP: (
             "decoder.block.{bid}.layer.2.DenseReluDense.wi",   # t5
             "decoder.block.{bid}.layer.2.DenseReluDense.wi_1", # flan-t5
+            "language_model.model.decoder.layers.{bid}.fc1", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_FFN_DOWN: (
             "decoder.block.{bid}.layer.2.DenseReluDense.wo", # t5
+            "language_model.model.decoder.layers.{bid}.fc2", # Docfusion
         ),
 
         MODEL_TENSOR.DEC_OUTPUT_NORM: (
@@ -787,22 +803,27 @@ class TensorNameMap:
 
         MODEL_TENSOR.ENC_ATTN_NORM: (
             "encoder.block.{bid}.layer.0.layer_norm", # t5
+            "language_model.model.encoder.layers.{bid}.self_attn_layer_norm", # Docfusion
         ),
 
         MODEL_TENSOR.ENC_ATTN_Q: (
             "encoder.block.{bid}.layer.0.SelfAttention.q", # t5
+            "language_model.model.encoder.layers.{bid}.self_attn.q_proj", # Docfusion
         ),
 
         MODEL_TENSOR.ENC_ATTN_K: (
             "encoder.block.{bid}.layer.0.SelfAttention.k", # t5
+            "language_model.model.encoder.layers.{bid}.self_attn.k_proj", # Docfusion
         ),
 
         MODEL_TENSOR.ENC_ATTN_V: (
             "encoder.block.{bid}.layer.0.SelfAttention.v", # t5
+            "language_model.model.encoder.layers.{bid}.self_attn.v_proj", # Docfusion
         ),
 
         MODEL_TENSOR.ENC_ATTN_OUT: (
             "encoder.block.{bid}.layer.0.SelfAttention.o", # t5
+            "language_model.model.encoder.layers.{bid}.self_attn.out_proj", # Docfusion
         ),
 
         MODEL_TENSOR.ENC_ATTN_REL_B: (
@@ -820,16 +841,39 @@ class TensorNameMap:
         MODEL_TENSOR.ENC_FFN_UP: (
             "encoder.block.{bid}.layer.1.DenseReluDense.wi",   # t5
             "encoder.block.{bid}.layer.1.DenseReluDense.wi_1", # flan-t5
+            "language_model.model.encoder.layers.{bid}.fc1",   # Docfusion
         ),
 
         MODEL_TENSOR.ENC_FFN_DOWN: (
             "encoder.block.{bid}.layer.1.DenseReluDense.wo", # t5
+            "language_model.model.encoder.layers.{bid}.fc2", # Docfusion
         ),
 
         ############################################################################
         # TODO: these do not belong to block_mappings_cfg - move them to mappings_cfg
         MODEL_TENSOR.ENC_OUTPUT_NORM: (
             "encoder.final_layer_norm", # t5
+        ),
+
+        MODEL_TENSOR.ENC_FINAL_NORM: (
+            "language_model.model.encoder.layers.{bid}.final_layer_norm", # Docfusion
+        ),
+        MODEL_TENSOR.DEC_FINAL_NORM: (
+            "language_model.model.decoder.layers.{bid}.final_layer_norm", # Docfusion
+        ),
+
+        MODEL_TENSOR.ENC_POS_EMBD: (
+            "language_model.model.encoder.embed_positions", # Docfusion
+        ),
+        MODEL_TENSOR.DEC_POS_EMBD: (
+            "language_model.model.decoder.embed_positions", # Docfusion
+        ),
+
+        MODEL_TENSOR.ENC_TOKEN_EMBD_NORM: (
+            "language_model.model.encoder.layernorm_embedding", # Docfusion
+        ),
+        MODEL_TENSOR.DEC_TOKEN_EMBD_NORM: (
+            "language_model.model.decoder.layernorm_embedding", # Docfusion
         ),
 
         MODEL_TENSOR.CLS: (
@@ -944,6 +988,7 @@ class TensorNameMap:
             "vpm.embeddings.position_embedding",
             "model.vision_model.embeddings.position_embedding", # SmolVLM
             "vision_model.positional_embedding_vlm", # llama 4
+            "image_pos_embed", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_ATTN_Q: (
@@ -953,6 +998,7 @@ class TensorNameMap:
             "vision_model.model.layers.{bid}.self_attn.q_proj", # llama4
             "vision_tower.transformer.layers.{bid}.attention.q_proj", # pixtral
             "visual.blocks.{bid}.attn.q", # qwen2vl, generated
+            "vision_tower.blocks.{bid}.channel_block.channel_attn.fn.q", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_ATTN_Q_NORM: (
@@ -966,6 +1012,7 @@ class TensorNameMap:
             "vision_model.model.layers.{bid}.self_attn.k_proj", # llama4
             "vision_tower.transformer.layers.{bid}.attention.k_proj", # pixtral
             "visual.blocks.{bid}.attn.k", # qwen2vl, generated
+            "vision_tower.blocks.{bid}.channel_block.channel_attn.fn.k", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_ATTN_K_NORM: (
@@ -979,6 +1026,7 @@ class TensorNameMap:
             "vision_model.model.layers.{bid}.self_attn.v_proj", # llama4
             "vision_tower.transformer.layers.{bid}.attention.v_proj", # pixtral
             "visual.blocks.{bid}.attn.v", # qwen2vl, generated
+            "vision_tower.blocks.{bid}.channel_block.channel_attn.fn.v", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_INPUT_NORM: (
@@ -989,6 +1037,7 @@ class TensorNameMap:
             "vision_tower.transformer.layers.{bid}.attention_norm", # pixtral
             "vision_model.model.layers.{bid}.input_layernorm", # llama4
             "visual.blocks.{bid}.norm1", # qwen2vl
+            "vision_tower.blocks.{bid}.channel_block.channel_attn.norm", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_ATTN_O: (
@@ -999,6 +1048,7 @@ class TensorNameMap:
             "vision_model.model.layers.{bid}.self_attn.o_proj", # llama4
             "vision_tower.transformer.layers.{bid}.attention.o_proj", # pixtral
             "visual.blocks.{bid}.attn.proj", # qwen2vl
+            "vision_tower.blocks.{bid}.channel_block.channel_attn.fn.proj", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_POST_ATTN_NORM: (
@@ -1009,6 +1059,7 @@ class TensorNameMap:
             "vision_model.model.layers.{bid}.post_attention_layernorm", # llama4
             "vision_tower.transformer.layers.{bid}.ffn_norm", # pixtral
             "visual.blocks.{bid}.norm2", # qwen2vl
+            "vision_tower.blocks.{bid}.channel_block.ffn.norm", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_FFN_UP: (
@@ -1019,6 +1070,7 @@ class TensorNameMap:
             "vision_model.model.layers.{bid}.mlp.fc1", # llama4
             "visual.blocks.{bid}.mlp.fc1", # qwen2vl
             "visual.blocks.{bid}.mlp.up_proj", # qwen2.5vl
+            "vision_tower.blocks.{bid}.channel_block.ffn.fn.net.fc1", # Docfusion
         ),
 
         MODEL_TENSOR.V_ENC_FFN_GATE: (
@@ -1034,6 +1086,100 @@ class TensorNameMap:
             "vision_model.model.layers.{bid}.mlp.fc2", # llama4
             "visual.blocks.{bid}.mlp.fc2", # qwen2vl
             "visual.blocks.{bid}.mlp.down_proj", # qwen2.5vl
+            "vision_tower.blocks.{bid}.channel_block.ffn.fn.net.fc2", # Docfusion
+        ),
+
+        # Docfusion
+        MODEL_TENSOR.V_CONVS_PROJ: (
+            "vision_tower.convs.{bid}.proj",
+        ),
+
+        MODEL_TENSOR.V_CONVS_NORM: (
+            "vision_tower.convs.{bid}.norm",
+        ),
+
+        # Docfusion position embedding
+        MODEL_TENSOR.V_POS_C: (
+            "image_pos_embed.column_embeddings.weight",
+        ),
+        MODEL_TENSOR.V_POS_R: (
+            "image_pos_embed.row_embeddings.weight",
+        ),
+        MODEL_TENSOR.V_POS_TO_EMBED: (
+            "vision_tower.pos_idx_to_embed.weight",
+        ),
+        MODEL_TENSOR.V_TEMPORAL_EMBED_POS_TO_EMBED: (
+            "visual_temporal_embed.pos_idx_to_embed",
+        ),
+
+        # Docfusion spatial block
+        MODEL_TENSOR.V_SP_CONV1_FN_DW: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.conv1.fn.dw",
+        ),
+        MODEL_TENSOR.V_SP_ATTN_NORM: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.window_attn.norm",
+        ),
+        MODEL_TENSOR.V_SP_ATTN_FN_QKV: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.window_attn.fn.qkv",
+        ),
+        MODEL_TENSOR.V_SP_ATTN_FN_Q: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.window_attn.fn.q",
+        ),
+        MODEL_TENSOR.V_SP_ATTN_FN_K: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.window_attn.fn.k",
+        ),
+        MODEL_TENSOR.V_SP_ATTN_FN_V: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.window_attn.fn.v",
+        ),
+        MODEL_TENSOR.V_SP_ATTN_FN_PROJ: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.window_attn.fn.proj",
+        ),
+        MODEL_TENSOR.V_SP_CONV2_FN_DW: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.conv2.fn.dw",
+        ),
+        MODEL_TENSOR.V_SP_FFN_NORM: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.ffn.norm",
+        ),
+        MODEL_TENSOR.V_SP_FFN_FN_NET_FC1: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.ffn.fn.net.fc1",
+        ),
+        MODEL_TENSOR.V_SP_FFN_FN_NET_FC2: (
+            "vision_tower.blocks.{bid}.<second_idx>.spatial_block.ffn.fn.net.fc2",
+        ),
+
+        # Docfusion channel block
+        MODEL_TENSOR.V_CN_CONV1_FN_DW: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.conv1.fn.dw",
+        ),
+        MODEL_TENSOR.V_CN_ATTN_NORM: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.channel_attn.norm",
+        ),
+        MODEL_TENSOR.V_CN_ATTN_FN_QKV: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.channel_attn.fn.qkv",
+        ),
+        MODEL_TENSOR.V_CN_ATTN_FN_Q: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.channel_attn.fn.q",
+        ),
+        MODEL_TENSOR.V_CN_ATTN_FN_K: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.channel_attn.fn.k",
+        ),
+        MODEL_TENSOR.V_CN_ATTN_FN_V: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.channel_attn.fn.v",
+        ),
+        MODEL_TENSOR.V_CN_ATTN_FN_PROJ: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.channel_attn.fn.proj",
+        ),
+        MODEL_TENSOR.V_CN_CONV2_FN_DW: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.conv2.fn.dw",
+        ),
+        MODEL_TENSOR.V_CN_FFN_NORM: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.ffn.norm",
+        ),
+        MODEL_TENSOR.V_CN_FFN_FN_NET_FC1: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.ffn.fn.net.fc1",
+        ),
+        MODEL_TENSOR.V_CN_FFN_FN_NET_FC2: (
+            "vision_tower.blocks.{bid}.<second_idx>.channel_block.ffn.fn.net.fc2",
         ),
 
         MODEL_TENSOR.V_LAYER_SCALE_1: (
@@ -1059,10 +1205,12 @@ class TensorNameMap:
 
         MODEL_TENSOR.V_MM_INP_PROJ: (
             "multi_modal_projector.mm_input_projection",
+            "image_projection", # Docfusion
         ),
 
         MODEL_TENSOR.V_MM_INP_NORM: (
             "multi_modal_projector.norm",
+            "image_proj_norm", # Docfusion
         ),
 
         MODEL_TENSOR.V_MM_SOFT_EMB_NORM: (

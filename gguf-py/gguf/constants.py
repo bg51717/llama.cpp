@@ -263,6 +263,45 @@ class Keys:
         class Projector:
             STACK_FACTOR    = "clip.audio.projector.stack_factor"
 
+    class DavitVision:
+        DROP_PATH_RATE   = "davit_vision.drop_path_rate"
+        PATCH_SIZE       = "davit_vision.patch_size"
+        PATCH_STRIDE     = "davit_vision.patch_stride"
+        PATCH_PADDING    = "davit_vision.patch_padding"
+        PATCH_PRENORM    = "davit_vision.patch_prenorm"
+        ENABLE_CHECKPOINT= "davit_vision.enable_checkpoint"
+        DIM_EMBED        = "davit_vision.dim_embed"
+        NUM_HEADS        = "davit_vision.num_heads"
+        NUM_GROUPS       = "davit_vision.num_groups"
+        DEPTHS           = "davit_vision.depths"
+        WINDOW_SIZE      = "davit_vision.window_size"
+        PROJECTION_DIM   = "davit_vision.projection_dim"
+        IMAGE_FEATURE_SOURCE = "davit_vision.image_feature_source"
+        MODEL_TYPE       = "davit_vision.model_type"
+
+        class Preprocess:
+            DO_CONVERT_RGB = "davit_vision.preprocess.do_convert_rgb"
+            DO_NORMALIZE   = "davit_vision.preprocess.do_normalize"
+            DO_RESCALE     = "davit_vision.preprocess.do_rescale"
+            DO_RESIZE      = "davit_vision.preprocess.do_resize"
+            DO_CENTER_CROP = "davit_vision.preprocess.do_center_crop"
+            IMAGE_PROCESSOR_TYPE = "davit_vision.preprocess.image_processor_type"
+            IMAGE_SEQ_LENGTH = "davit_vision.preprocess.image_seq_length"
+            IMAGE_MEAN = "davit_vision.preprocess.image_mean"
+            IMAGE_STD = "davit_vision.preprocess.image_std"
+            PROCESSOR_CLASS = "davit_vision.preprocess.processor_class"
+            RESAMPLE = "davit_vision.preprocess.resample"
+            SIZE = "davit_vision.preprocess.size"
+            CROP_SIZE = "davit_vision.preprocess.crop_size"
+
+        class TemporalEmbedding:
+            TYPE                    = "davit_vision.temporal_embedding.type"
+            MAX_TEMPORAL_EMBEDDINGS = "davit_vision.temporal_embedding.max_embeddings"
+
+        class ImagePosEmbed:
+            TYPE               = "davit_vision.image_pos_embed.type"
+            MAX_POS_EMBEDDINGS = "davit_vision.image_pos_embed.max_embeddings"
+
 #
 # recommended mapping of model tensor names for storage in gguf
 #
@@ -343,6 +382,7 @@ class MODEL_ARCH(IntEnum):
     WAVTOKENIZER_DEC = auto()
     PLM              = auto()
     BAILINGMOE       = auto()
+    DOCFUSION        = auto()
 
 
 class VISION_PROJECTOR_TYPE(IntEnum):
@@ -353,6 +393,7 @@ class VISION_PROJECTOR_TYPE(IntEnum):
     GLM_EDGE  = auto()
     MERGER    = auto()
     GEMMA3    = auto()
+    DOCFUSION = auto()
 
 
 class MODEL_TENSOR(IntEnum):
@@ -476,6 +517,43 @@ class MODEL_TENSOR(IntEnum):
     ENC_FFN_DOWN         = auto()
     ENC_FFN_UP           = auto()
     ENC_OUTPUT_NORM      = auto()
+    # Docfusion
+    ENC_POS_EMBD         = auto()
+    DEC_POS_EMBD         = auto()
+    ENC_FINAL_NORM       = auto()
+    DEC_FINAL_NORM       = auto()
+    ENC_TOKEN_EMBD_NORM  = auto()
+    DEC_TOKEN_EMBD_NORM  = auto()
+    V_CONVS_PROJ         = auto()
+    V_CONVS_NORM         = auto()
+    V_POS_TO_EMBED       = auto()
+    V_POS_R              = auto()
+    V_POS_C              = auto()
+    V_TEMPORAL_EMBED_POS_TO_EMBED = auto()
+    # Docfusion spatial_block
+    V_SP_CONV1_FN_DW     = auto()
+    V_SP_ATTN_NORM       = auto()
+    V_SP_ATTN_FN_QKV     = auto()
+    V_SP_ATTN_FN_Q       = auto()
+    V_SP_ATTN_FN_K       = auto()
+    V_SP_ATTN_FN_V       = auto()
+    V_SP_ATTN_FN_PROJ    = auto()
+    V_SP_CONV2_FN_DW     = auto()
+    V_SP_FFN_NORM        = auto()
+    V_SP_FFN_FN_NET_FC1  = auto()
+    V_SP_FFN_FN_NET_FC2  = auto()
+    # Docfusion channel_block
+    V_CN_CONV1_FN_DW     = auto()
+    V_CN_ATTN_NORM       = auto()
+    V_CN_ATTN_FN_QKV     = auto()
+    V_CN_ATTN_FN_Q       = auto()
+    V_CN_ATTN_FN_K       = auto()
+    V_CN_ATTN_FN_V       = auto()
+    V_CN_ATTN_FN_PROJ    = auto()
+    V_CN_CONV2_FN_DW     = auto()
+    V_CN_FFN_NORM        = auto()
+    V_CN_FFN_FN_NET_FC1  = auto()
+    V_CN_FFN_FN_NET_FC2  = auto()
     CLS                  = auto() # classifier
     CLS_OUT              = auto() # classifier output projection
     CONV1D               = auto()
@@ -623,6 +701,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.WAVTOKENIZER_DEC: "wavtokenizer-dec",
     MODEL_ARCH.PLM:              "plm",
     MODEL_ARCH.BAILINGMOE:       "bailingmoe",
+    MODEL_ARCH.DOCFUSION:        "docfusion",
 }
 
 VISION_PROJECTOR_TYPE_NAMES: dict[VISION_PROJECTOR_TYPE, str] = {
@@ -633,6 +712,7 @@ VISION_PROJECTOR_TYPE_NAMES: dict[VISION_PROJECTOR_TYPE, str] = {
     VISION_PROJECTOR_TYPE.GLM_EDGE:  "adapter",
     VISION_PROJECTOR_TYPE.MERGER:    "qwen2vl_merger",
     VISION_PROJECTOR_TYPE.GEMMA3:    "gemma3",
+    VISION_PROJECTOR_TYPE.DOCFUSION: "docfusion",
 }
 
 TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
@@ -756,6 +836,13 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.ENC_FFN_DOWN:              "enc.blk.{bid}.ffn_down",
     MODEL_TENSOR.ENC_FFN_UP:                "enc.blk.{bid}.ffn_up",
     MODEL_TENSOR.ENC_OUTPUT_NORM:           "enc.output_norm",
+    # Docfusion
+    MODEL_TENSOR.ENC_POS_EMBD:              "enc.pos_embd",
+    MODEL_TENSOR.DEC_POS_EMBD:              "dec.pos_embd",
+    MODEL_TENSOR.ENC_FINAL_NORM:            "enc.blk.{bid}.final_norm",
+    MODEL_TENSOR.DEC_FINAL_NORM:            "dec.blk.{bid}.final_norm",
+    MODEL_TENSOR.ENC_TOKEN_EMBD_NORM:       "enc.token_embd_norm",
+    MODEL_TENSOR.DEC_TOKEN_EMBD_NORM:       "dec.token_embd_norm",
     MODEL_TENSOR.CLS:                       "cls",
     MODEL_TENSOR.CLS_OUT:                   "cls.output",
     MODEL_TENSOR.CONV1D:                    "conv1d",
@@ -814,6 +901,37 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.V_RESMPL_QUERY:            "resampler.query",
     MODEL_TENSOR.V_TOK_EMBD_IMG_BREAK:      "v.token_embd.img_break", # pixtral
     MODEL_TENSOR.V_MM_PATCH_MERGER:         "mm.patch_merger", # mistral small 3.1
+    # Docfusion
+    MODEL_TENSOR.V_CONVS_PROJ:              "v.convs.{bid}.proj",
+    MODEL_TENSOR.V_CONVS_NORM:              "v.convs.{bid}.norm",
+    MODEL_TENSOR.V_POS_C:                   "v.pos_c",
+    MODEL_TENSOR.V_POS_R:                   "v.pos_r",
+    MODEL_TENSOR.V_POS_TO_EMBED:            "v.pos_idx_to_embed",
+    MODEL_TENSOR.V_TEMPORAL_EMBED_POS_TO_EMBED: "visual_temporal_embed.pos_idx_to_embed",
+    # Docfusion spatial_block
+    MODEL_TENSOR.V_SP_CONV1_FN_DW:          "v.blk.{bid}.<second_idx>.spatial_block.conv1.fn.dw",
+    MODEL_TENSOR.V_SP_ATTN_NORM:            "v.blk.{bid}.<second_idx>.spatial_block.window_attn.norm",
+    MODEL_TENSOR.V_SP_ATTN_FN_QKV:          "v.blk.{bid}.<second_idx>.spatial_block.window_attn.fn.qkv",
+    MODEL_TENSOR.V_SP_ATTN_FN_Q:            "v.blk.{bid}.<second_idx>.spatial_block.window_attn.fn.q",
+    MODEL_TENSOR.V_SP_ATTN_FN_K:            "v.blk.{bid}.<second_idx>.spatial_block.window_attn.fn.k",
+    MODEL_TENSOR.V_SP_ATTN_FN_V:            "v.blk.{bid}.<second_idx>.spatial_block.window_attn.fn.v",
+    MODEL_TENSOR.V_SP_ATTN_FN_PROJ:         "v.blk.{bid}.<second_idx>.spatial_block.window_attn.fn.proj",
+    MODEL_TENSOR.V_SP_CONV2_FN_DW:          "v.blk.{bid}.<second_idx>.spatial_block.conv2.fn.dw",
+    MODEL_TENSOR.V_SP_FFN_NORM:             "v.blk.{bid}.<second_idx>.spatial_block.ffn.norm",
+    MODEL_TENSOR.V_SP_FFN_FN_NET_FC1:       "v.blk.{bid}.<second_idx>.spatial_block.ffn.fn.net.fc1",
+    MODEL_TENSOR.V_SP_FFN_FN_NET_FC2:       "v.blk.{bid}.<second_idx>.spatial_block.ffn.fn.net.fc2",
+    # Docfusion channel_block
+    MODEL_TENSOR.V_CN_CONV1_FN_DW:          "v.blk.{bid}.<second_idx>.channel_block.conv1.fn.dw",
+    MODEL_TENSOR.V_CN_ATTN_NORM:            "v.blk.{bid}.<second_idx>.channel_block.channel_attn.norm",
+    MODEL_TENSOR.V_CN_ATTN_FN_QKV:          "v.blk.{bid}.<second_idx>.channel_block.channel_attn.fn.qkv",
+    MODEL_TENSOR.V_CN_ATTN_FN_Q:            "v.blk.{bid}.<second_idx>.channel_block.channel_attn.fn.q",
+    MODEL_TENSOR.V_CN_ATTN_FN_K:            "v.blk.{bid}.<second_idx>.channel_block.channel_attn.fn.k",
+    MODEL_TENSOR.V_CN_ATTN_FN_V:            "v.blk.{bid}.<second_idx>.channel_block.channel_attn.fn.v",
+    MODEL_TENSOR.V_CN_ATTN_FN_PROJ:         "v.blk.{bid}.<second_idx>.channel_block.channel_attn.fn.proj",
+    MODEL_TENSOR.V_CN_CONV2_FN_DW:          "v.blk.{bid}.<second_idx>.channel_block.conv2.fn.dw",
+    MODEL_TENSOR.V_CN_FFN_NORM:             "v.blk.{bid}.<second_idx>.channel_block.ffn.norm",
+    MODEL_TENSOR.V_CN_FFN_FN_NET_FC1:       "v.blk.{bid}.<second_idx>.channel_block.ffn.fn.net.fc1",
+    MODEL_TENSOR.V_CN_FFN_FN_NET_FC2:       "v.blk.{bid}.<second_idx>.channel_block.ffn.fn.net.fc2",
     # audio (mtmd)
     MODEL_TENSOR.A_ENC_EMBD_POS:            "a.position_embd",
     MODEL_TENSOR.A_ENC_CONV1D:              "a.conv1d.{bid}",
@@ -875,6 +993,37 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.V_RESMPL_QUERY,
         MODEL_TENSOR.V_TOK_EMBD_IMG_BREAK,
         MODEL_TENSOR.V_MM_PATCH_MERGER,
+        # Docfusion
+        MODEL_TENSOR.V_CONVS_PROJ,
+        MODEL_TENSOR.V_CONVS_NORM,
+        MODEL_TENSOR.V_POS_C,
+        MODEL_TENSOR.V_POS_R,
+        MODEL_TENSOR.V_POS_TO_EMBED,
+        MODEL_TENSOR.V_TEMPORAL_EMBED_POS_TO_EMBED,
+        # Docfusion spatial_block
+        MODEL_TENSOR.V_SP_CONV1_FN_DW,
+        MODEL_TENSOR.V_SP_ATTN_NORM,
+        MODEL_TENSOR.V_SP_ATTN_FN_QKV,
+        MODEL_TENSOR.V_SP_ATTN_FN_Q,
+        MODEL_TENSOR.V_SP_ATTN_FN_K,
+        MODEL_TENSOR.V_SP_ATTN_FN_V,
+        MODEL_TENSOR.V_SP_ATTN_FN_PROJ,
+        MODEL_TENSOR.V_SP_CONV2_FN_DW,
+        MODEL_TENSOR.V_SP_FFN_NORM,
+        MODEL_TENSOR.V_SP_FFN_FN_NET_FC1,
+        MODEL_TENSOR.V_SP_FFN_FN_NET_FC2,
+        # Docfusion channel_block
+        MODEL_TENSOR.V_CN_CONV1_FN_DW,
+        MODEL_TENSOR.V_CN_ATTN_NORM,
+        MODEL_TENSOR.V_CN_ATTN_FN_QKV,
+        MODEL_TENSOR.V_CN_ATTN_FN_Q,
+        MODEL_TENSOR.V_CN_ATTN_FN_K,
+        MODEL_TENSOR.V_CN_ATTN_FN_V,
+        MODEL_TENSOR.V_CN_ATTN_FN_PROJ,
+        MODEL_TENSOR.V_CN_CONV2_FN_DW,
+        MODEL_TENSOR.V_CN_FFN_NORM,
+        MODEL_TENSOR.V_CN_FFN_FN_NET_FC1,
+        MODEL_TENSOR.V_CN_FFN_FN_NET_FC2,
         # audio
         MODEL_TENSOR.A_ENC_EMBD_POS,
         MODEL_TENSOR.A_ENC_CONV1D,
@@ -2044,7 +2193,37 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.FFN_DOWN_SHEXP,
         MODEL_TENSOR.FFN_UP_SHEXP,
     ],
-    # TODO
+    MODEL_ARCH.DOCFUSION: [
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.DEC_ATTN_NORM,
+        MODEL_TENSOR.DEC_ATTN_Q,
+        MODEL_TENSOR.DEC_ATTN_K,
+        MODEL_TENSOR.DEC_ATTN_V,
+        MODEL_TENSOR.DEC_ATTN_OUT,
+        MODEL_TENSOR.DEC_CROSS_ATTN_NORM,
+        MODEL_TENSOR.DEC_CROSS_ATTN_Q,
+        MODEL_TENSOR.DEC_CROSS_ATTN_K,
+        MODEL_TENSOR.DEC_CROSS_ATTN_V,
+        MODEL_TENSOR.DEC_CROSS_ATTN_OUT,
+        MODEL_TENSOR.DEC_FFN_UP,
+        MODEL_TENSOR.DEC_FFN_DOWN,
+
+        MODEL_TENSOR.ENC_ATTN_NORM,
+        MODEL_TENSOR.ENC_ATTN_Q,
+        MODEL_TENSOR.ENC_ATTN_K,
+        MODEL_TENSOR.ENC_ATTN_V,
+        MODEL_TENSOR.ENC_ATTN_OUT,
+        MODEL_TENSOR.ENC_FFN_UP,
+        MODEL_TENSOR.ENC_FFN_DOWN,
+
+        MODEL_TENSOR.ENC_POS_EMBD,
+        MODEL_TENSOR.ENC_FINAL_NORM,
+        MODEL_TENSOR.ENC_TOKEN_EMBD_NORM,
+        MODEL_TENSOR.DEC_POS_EMBD,
+        MODEL_TENSOR.DEC_FINAL_NORM,
+        MODEL_TENSOR.DEC_TOKEN_EMBD_NORM,
+    ],
 }
 
 # tensors that will not be serialized
@@ -2265,6 +2444,7 @@ class VisionProjectorType:
     INTERNVL = "internvl"
     QWEN2A = "qwen2a" # audio
     QWEN25O = "qwen2.5o" # omni
+    DOCFUSION = "docfusion"
 
 
 # Items here are (block size, type size)
